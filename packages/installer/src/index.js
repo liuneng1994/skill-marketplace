@@ -1,9 +1,13 @@
 import os from 'node:os';
 import path from 'node:path';
-import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { validateBundleDir } from '../../schema/src/index.js';
+import { cp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { readManifest, validateBundleDir } from '../../schema/src/index.js';
 import { resolveCopilotCliInstallPaths } from '../../targets/copilot-cli/src/index.js';
 import { resolveClaudeCodeInstallPaths } from '../../targets/claude-code/src/index.js';
+
+const installerLockTimeoutMs = 5_000;
+const installerLockRetryMs = 100;
+const simpleVersionPattern = /^\d+\.\d+\.\d+$/;
 
 function getTargetResolver(targetId) {
   if (targetId === 'copilot-cli') {
@@ -15,6 +19,61 @@ function getTargetResolver(targetId) {
   throw new Error(`Unsupported install target: ${targetId}`);
 }
 
+function shellQuote(value) {
+  const normalized = String(value);
+  if (normalized.length === 0) {
+    return "''";
+  }
+  return `'${normalized.replaceAll("'", "'\\''")}'`;
+}
+
+function sleep(delayMs) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+}
+
+function parseVersion(value, label) {
+  if (typeof value !== 'string' || !simpleVersionPattern.test(value.trim())) {
+    throw new Error(`${label} must be a numeric version like 1.2.3.`);
+  }
+  return value
+    .trim()
+    .split('.')
+    .map((part) => Number(part));
+}
+
+function compareVersions(left, right) {
+  const leftParts = parseVersion(left, 'Client version');
+  const rightParts = parseVersion(right, 'Minimum supported version');
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return 0;
+}
+
+function assertTargetCompatibility({ manifest, targetId, clientVersion }) {
+  if (typeof clientVersion !== 'string' || clientVersion.trim() === '') {
+    return;
+  }
+  const descriptor = manifest.targets?.[targetId];
+  if (!descriptor) {
+    throw new Error(`Target ${targetId} is not defined by ${manifest.slug}.`);
+  }
+  const minVersion = descriptor.compatibility?.minVersion;
+  if (!minVersion) {
+    return;
+  }
+  if (compareVersions(clientVersion, minVersion) < 0) {
+    throw new Error(
+      `${manifest.slug} requires ${targetId} version ${minVersion} or newer. Received ${clientVersion.trim()}.`,
+    );
+  }
+}
+
 async function pathExists(targetPath) {
   try {
     await stat(targetPath);
@@ -24,17 +83,68 @@ async function pathExists(targetPath) {
   }
 }
 
+function normalizeLockfile(lockfile) {
+  const installs = lockfile && typeof lockfile === 'object' && lockfile.installs && typeof lockfile.installs === 'object' ? lockfile.installs : {};
+  return { installs };
+}
+
 async function readLockfile(lockfilePath) {
   if (!(await pathExists(lockfilePath))) {
-    return { installs: {} };
+    return { lockfile: { installs: {} } };
   }
+
   const raw = await readFile(lockfilePath, 'utf8');
-  return JSON.parse(raw);
+  try {
+    return { lockfile: normalizeLockfile(JSON.parse(raw)) };
+  } catch {
+    const recoveredLockfilePath = `${lockfilePath}.corrupt-${Date.now()}`;
+    await rename(lockfilePath, recoveredLockfilePath);
+    return {
+      lockfile: { installs: {} },
+      recoveredLockfilePath,
+    };
+  }
 }
 
 async function writeLockfile(lockfilePath, lockfile) {
   await mkdir(path.dirname(lockfilePath), { recursive: true });
-  await writeFile(lockfilePath, `${JSON.stringify(lockfile, null, 2)}\n`, 'utf8');
+  const tempPath = `${lockfilePath}.tmp-${process.pid}-${Date.now()}`;
+  await writeFile(tempPath, `${JSON.stringify(lockfile, null, 2)}\n`, 'utf8');
+  await rename(tempPath, lockfilePath);
+}
+
+async function acquireInstallerLock(stateRoot) {
+  const lockDir = path.join(stateRoot, 'locks', 'installer.lock');
+  await mkdir(path.dirname(lockDir), { recursive: true });
+  const startedAt = Date.now();
+
+  while (true) {
+    try {
+      await mkdir(lockDir);
+      await writeFile(
+        path.join(lockDir, 'owner.json'),
+        `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }, null, 2)}\n`,
+        'utf8',
+      );
+      return { lockDir };
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST') {
+        if (Date.now() - startedAt >= installerLockTimeoutMs) {
+          throw new Error(`Timed out waiting for installer lock at ${lockDir}. Another install or uninstall may still be running.`);
+        }
+        await sleep(installerLockRetryMs);
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+async function releaseInstallerLock(lock) {
+  if (!lock) {
+    return;
+  }
+  await rm(lock.lockDir, { recursive: true, force: true });
 }
 
 function replacePlaceholders(template, replacements) {
@@ -43,6 +153,47 @@ function replacePlaceholders(template, replacements) {
     result = result.replaceAll(token, value);
   }
   return result;
+}
+
+function createHookTemplateReplacements({ targetId, memoryRoot, sharedDir, installDir, installedScriptDir, slug }) {
+  const replacements = {
+    '__MEMORY_ROOT_RAW__': memoryRoot,
+    '__MEMORY_ROOT_JSON__': JSON.stringify(memoryRoot),
+    '__SHARED_DIR_RAW__': sharedDir,
+    '__SHARED_DIR_JSON__': JSON.stringify(sharedDir),
+    '__INSTALL_DIR_RAW__': installDir,
+    '__INSTALL_DIR_JSON__': JSON.stringify(installDir),
+    '__SCRIPT_DIR_RAW__': installedScriptDir,
+    '__SCRIPT_DIR_JSON__': JSON.stringify(installedScriptDir),
+    '__SKILL_SLUG_RAW__': slug,
+    '__SKILL_SLUG_JSON__': JSON.stringify(slug),
+  };
+
+  if (targetId === 'copilot-cli') {
+    return {
+      ...replacements,
+      '__COPILOT_SESSION_START_COMMAND_JSON__': JSON.stringify(`node ${shellQuote(path.join(installedScriptDir, 'session-start.mjs'))}`),
+      '__COPILOT_PRE_TOOL_COMMAND_JSON__': JSON.stringify(`node ${shellQuote(path.join(installedScriptDir, 'pre-tool.mjs'))}`),
+      '__COPILOT_POST_TOOL_COMMAND_JSON__': JSON.stringify(`node ${shellQuote(path.join(installedScriptDir, 'post-tool.mjs'))}`),
+      '__COPILOT_ERROR_COMMAND_JSON__': JSON.stringify(`node ${shellQuote(path.join(installedScriptDir, 'error.mjs'))}`),
+      '__COPILOT_SESSION_END_COMMAND_JSON__': JSON.stringify(`node ${shellQuote(path.join(installedScriptDir, 'session-end.mjs'))}`),
+    };
+  }
+
+  if (targetId === 'claude-code') {
+    return {
+      ...replacements,
+      '__CLAUDE_PRE_TOOL_COMMAND_JSON__': JSON.stringify(
+        `bash ${shellQuote(path.join(installedScriptDir, 'pre-tool.sh'))} "$TOOL_NAME" "$TOOL_INPUT"`,
+      ),
+      '__CLAUDE_POST_TOOL_COMMAND_JSON__': JSON.stringify(
+        `bash ${shellQuote(path.join(installedScriptDir, 'post-tool.sh'))} "$TOOL_OUTPUT" "$EXIT_CODE"`,
+      ),
+      '__CLAUDE_SESSION_END_COMMAND_JSON__': JSON.stringify(`bash ${shellQuote(path.join(installedScriptDir, 'session-end.sh'))}`),
+    };
+  }
+
+  return replacements;
 }
 
 async function installSharedAssets({ bundleDir, manifest, installDir }) {
@@ -78,13 +229,17 @@ async function bootstrapBundle({ bundleDir, manifest, targetId, stateRoot, insta
     const relativeScriptDir = manifest.shared?.path ? path.relative(manifest.shared.path, hookDescriptor.scripts) : hookDescriptor.scripts;
     const installedScriptDir = path.join(sharedDir, relativeScriptDir);
     const hookTemplatePath = path.join(bundleStateRoot, 'generated-hooks', `${targetId}.md`);
-    const rendered = replacePlaceholders(templateContent, {
-      '__MEMORY_ROOT__': bootstrap.memoryRoot ?? path.join(bundleStateRoot, 'memory'),
-      '__SHARED_DIR__': sharedDir,
-      '__SCRIPT_DIR__': installedScriptDir,
-      '__INSTALL_DIR__': installDir,
-      '__SKILL_SLUG__': manifest.slug,
-    });
+    const rendered = replacePlaceholders(
+      templateContent,
+      createHookTemplateReplacements({
+        targetId,
+        memoryRoot: bootstrap.memoryRoot ?? path.join(bundleStateRoot, 'memory'),
+        sharedDir,
+        installDir,
+        installedScriptDir,
+        slug: manifest.slug,
+      }),
+    );
     await mkdir(path.dirname(hookTemplatePath), { recursive: true });
     await writeFile(hookTemplatePath, rendered, 'utf8');
     bootstrap.hookTemplatePath = hookTemplatePath;
@@ -94,6 +249,13 @@ async function bootstrapBundle({ bundleDir, manifest, targetId, stateRoot, insta
   return Object.keys(bootstrap).length > 0 ? bootstrap : undefined;
 }
 
+async function loadInstalledManifest(entry) {
+  if (!entry?.bundleDir) {
+    throw new Error('Installed skill metadata is missing bundleDir, so compatibility cannot be verified.');
+  }
+  return readManifest(entry.bundleDir);
+}
+
 export async function installSkillFromBundle({
   bundleDir,
   targetId,
@@ -101,6 +263,7 @@ export async function installSkillFromBundle({
   workspaceDir = process.cwd(),
   homeDir = os.homedir(),
   force = false,
+  clientVersion,
 }) {
   const validation = await validateBundleDir(bundleDir);
   if (!validation.ok) {
@@ -112,48 +275,131 @@ export async function installSkillFromBundle({
   if (!descriptor) {
     throw new Error(`Target ${targetId} is not defined by ${manifest.slug}.`);
   }
+  assertTargetCompatibility({ manifest, targetId, clientVersion });
 
   const resolveInstallPaths = getTargetResolver(targetId);
   const paths = resolveInstallPaths({ scope, workspaceDir, homeDir });
-  const installDir = path.join(paths.installRoot, manifest.slug);
-  if ((await pathExists(installDir)) && !force) {
-    throw new Error(`Skill already installed at ${installDir}. Use --force to overwrite.`);
+  const lock = await acquireInstallerLock(paths.stateRoot);
+
+  try {
+    const installDir = path.join(paths.installRoot, manifest.slug);
+    if ((await pathExists(installDir)) && !force) {
+      throw new Error(`Skill already installed at ${installDir}. Use --force to overwrite.`);
+    }
+
+    await mkdir(paths.installRoot, { recursive: true });
+    await rm(installDir, { recursive: true, force: true });
+    await cp(path.join(bundleDir, descriptor.path), installDir, { recursive: true });
+    const sharedDir = await installSharedAssets({ bundleDir, manifest, installDir });
+    const bootstrap = await bootstrapBundle({
+      bundleDir,
+      manifest,
+      targetId,
+      stateRoot: paths.stateRoot,
+      installDir,
+      sharedDir,
+    });
+
+    const { lockfile, recoveredLockfilePath } = await readLockfile(paths.lockfilePath);
+    lockfile.installs[`${targetId}:${manifest.slug}`] = {
+      slug: manifest.slug,
+      version: manifest.version,
+      targetId,
+      scope,
+      installDir,
+      bundleDir,
+      bootstrap,
+      updatedAt: new Date().toISOString(),
+    };
+    await writeLockfile(paths.lockfilePath, lockfile);
+
+    return {
+      slug: manifest.slug,
+      version: manifest.version,
+      targetId,
+      scope,
+      installDir,
+      sharedDir,
+      lockfilePath: paths.lockfilePath,
+      recoveredLockfilePath,
+      bootstrap,
+    };
+  } finally {
+    await releaseInstallerLock(lock);
   }
+}
 
-  await mkdir(paths.installRoot, { recursive: true });
-  await rm(installDir, { recursive: true, force: true });
-  await cp(path.join(bundleDir, descriptor.path), installDir, { recursive: true });
-  const sharedDir = await installSharedAssets({ bundleDir, manifest, installDir });
-  const bootstrap = await bootstrapBundle({
-    bundleDir,
-    manifest,
-    targetId,
-    stateRoot: paths.stateRoot,
-    installDir,
-    sharedDir,
-  });
+export async function uninstallSkill({
+  slug,
+  targetId,
+  scope = 'project',
+  workspaceDir = process.cwd(),
+  homeDir = os.homedir(),
+  force = false,
+  clientVersion,
+}) {
+  const resolveInstallPaths = getTargetResolver(targetId);
+  const paths = resolveInstallPaths({ scope, workspaceDir, homeDir });
+  const installKey = `${targetId}:${slug}`;
+  const lock = await acquireInstallerLock(paths.stateRoot);
 
-  const lockfile = await readLockfile(paths.lockfilePath);
-  lockfile.installs[`${targetId}:${manifest.slug}`] = {
-    slug: manifest.slug,
-    version: manifest.version,
-    targetId,
-    scope,
-    installDir,
-    bundleDir,
-    bootstrap,
-    updatedAt: new Date().toISOString(),
-  };
-  await writeLockfile(paths.lockfilePath, lockfile);
+  try {
+    const { lockfile, recoveredLockfilePath } = await readLockfile(paths.lockfilePath);
+    const entry = lockfile.installs[installKey];
+    if (!entry && !force) {
+      throw new Error(`Skill ${slug} is not installed for ${targetId} in ${scope} scope.`);
+    }
+    if (entry) {
+      const manifest = await loadInstalledManifest(entry);
+      assertTargetCompatibility({ manifest, targetId, clientVersion });
+    }
 
-  return {
-    slug: manifest.slug,
-    version: manifest.version,
-    targetId,
-    scope,
-    installDir,
-    sharedDir,
-    lockfilePath: paths.lockfilePath,
-    bootstrap,
-  };
+    const installDir = entry?.installDir ?? path.join(paths.installRoot, slug);
+    const result = {
+      slug,
+      targetId,
+      scope,
+      lockfilePath: paths.lockfilePath,
+      recoveredLockfilePath,
+      removed: {
+        installDir: false,
+        hookTemplatePath: false,
+        stateDir: false,
+        lockfileEntry: false,
+      },
+      preservedState: false,
+    };
+
+    if (await pathExists(installDir)) {
+      await rm(installDir, { recursive: true, force: true });
+      result.removed.installDir = true;
+    }
+
+    if (entry) {
+      delete lockfile.installs[installKey];
+      result.removed.lockfileEntry = true;
+    }
+
+    const remainingInstalls = Object.values(lockfile.installs);
+    const remainingSlugInstalls = remainingInstalls.filter((install) => install.slug === slug);
+
+    if (entry?.bootstrap?.hookTemplatePath && remainingSlugInstalls.length > 0 && (await pathExists(entry.bootstrap.hookTemplatePath))) {
+      await rm(entry.bootstrap.hookTemplatePath, { force: true });
+      result.removed.hookTemplatePath = true;
+      result.preservedState = true;
+    }
+
+    const bundleStateRoot = path.join(paths.stateRoot, slug);
+    if (remainingSlugInstalls.length === 0 && (await pathExists(bundleStateRoot))) {
+      await rm(bundleStateRoot, { recursive: true, force: true });
+      result.removed.stateDir = true;
+    } else if (remainingSlugInstalls.length > 0) {
+      result.preservedState = true;
+    }
+
+    await writeLockfile(paths.lockfilePath, lockfile);
+    return result;
+  } finally {
+    await releaseInstallerLock(lock);
+  }
 }

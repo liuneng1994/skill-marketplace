@@ -73,13 +73,19 @@ node marketplace.mjs show self-improving-agent
 Install the migrated self-improving-agent for GitHub Copilot CLI into the current workspace:
 
 ```bash
-node marketplace.mjs install self-improving-agent --target copilot-cli --scope project
+node marketplace.mjs install self-improving-agent --target copilot-cli --scope project --client-version 0.1.0
 ```
 
 Install the migrated self-improving-agent for Claude Code into the user-level skill directory:
 
 ```bash
-node marketplace.mjs install self-improving-agent --target claude-code --scope user
+node marketplace.mjs install self-improving-agent --target claude-code --scope user --client-version 0.1.0
+```
+
+Uninstall a skill target and clean marketplace-managed state when it is the last install for that skill:
+
+```bash
+node marketplace.mjs uninstall self-improving-agent --target claude-code --scope user --client-version 0.1.0
 ```
 
 ## Install behavior
@@ -89,8 +95,18 @@ For bundles that declare bootstrap metadata (such as `self-improving-agent`), in
 1. copies the target payload into the client-native skills directory
 2. copies any declared shared assets into `<installed-skill>/shared`
 3. bootstraps memory and generated hook template files under `.skill-marketplace/<slug>/`
+4. optionally enforces `compatibility.minVersion` when you pass `--client-version`
 
 The installer does **not** silently overwrite your existing Copilot CLI or Claude Code hook settings. Instead it generates target-specific hook snippets you can review and merge intentionally.
+It also serializes install and uninstall mutations through `.skill-marketplace/locks/installer.lock` so concurrent operations cannot corrupt marketplace state.
+
+## Runtime durability
+
+The migrated `self-improving-agent` keeps its event stream in `.skill-marketplace/<slug>/memory/working/events.jsonl`.
+
+- the active log rotates automatically once it grows past the retention threshold
+- old rotated files are trimmed to a bounded archive count
+- `retention.json` records the active policy and the currently retained archives
 
 ## API endpoints
 

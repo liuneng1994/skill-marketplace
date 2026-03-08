@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { publishBundle, listSkills, getSkill, getInstallMetadata, resolveRegistryDir } from './apps/api/src/store.js';
 import { rebuildSearchIndex } from './apps/workers/src/index.js';
-import { installSkillFromBundle } from './packages/installer/src/index.js';
+import { installSkillFromBundle, uninstallSkill } from './packages/installer/src/index.js';
 
 function parseArgs(argv) {
   const positional = [];
@@ -31,7 +31,8 @@ function printUsage() {
   node marketplace.mjs list [--target <target>] [--registry <dir>]
   node marketplace.mjs show <slug> [--registry <dir>]
   node marketplace.mjs publish <bundleDir> [--registry <dir>]
-  node marketplace.mjs install <slug> --target <target> [--version <version>] [--scope project|user] [--workspace <dir>] [--home <dir>] [--registry <dir>]`);
+  node marketplace.mjs install <slug> --target <target> [--version <version>] [--client-version <version>] [--scope project|user] [--workspace <dir>] [--home <dir>] [--registry <dir>] [--force]
+  node marketplace.mjs uninstall <slug> --target <target> [--client-version <version>] [--scope project|user] [--workspace <dir>] [--home <dir>] [--force]`);
 }
 
 async function main() {
@@ -95,6 +96,28 @@ async function main() {
       workspaceDir: typeof options.workspace === 'string' ? path.resolve(options.workspace) : process.cwd(),
       homeDir: typeof options.home === 'string' ? path.resolve(options.home) : os.homedir(),
       force: Boolean(options.force),
+      clientVersion: typeof options['client-version'] === 'string' ? options['client-version'] : undefined,
+    });
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (command === 'uninstall') {
+    const slug = positional[0];
+    if (!slug) {
+      throw new Error('uninstall requires a <slug> argument');
+    }
+    if (typeof options.target !== 'string') {
+      throw new Error('uninstall requires --target <copilot-cli|claude-code>');
+    }
+    const result = await uninstallSkill({
+      slug,
+      targetId: options.target,
+      scope: typeof options.scope === 'string' ? options.scope : 'project',
+      workspaceDir: typeof options.workspace === 'string' ? path.resolve(options.workspace) : process.cwd(),
+      homeDir: typeof options.home === 'string' ? path.resolve(options.home) : os.homedir(),
+      force: Boolean(options.force),
+      clientVersion: typeof options['client-version'] === 'string' ? options['client-version'] : undefined,
     });
     console.log(JSON.stringify(result, null, 2));
     return;

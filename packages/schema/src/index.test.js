@@ -29,6 +29,31 @@ test('validateManifest accepts the example manifest shape', () => {
   assert.equal(validateManifest(manifest).ok, true);
 });
 
+test('validateManifest rejects invalid compatibility versions', () => {
+  const manifest = {
+    slug: 'demo-skill',
+    name: 'Demo Skill',
+    summary: 'Example summary',
+    version: '1.0.0',
+    license: 'MIT',
+    tags: ['demo'],
+    publisher: { name: 'Example', github: 'example' },
+    repository: { url: 'https://github.com/example/demo' },
+    targets: {
+      'copilot-cli': {
+        path: 'targets/copilot-cli',
+        entrypoint: 'SKILL.md',
+        install: { scope: 'project-or-user' },
+        compatibility: { minVersion: 'latest' }
+      }
+    }
+  };
+
+  const validation = validateManifest(manifest);
+  assert.equal(validation.ok, false);
+  assert.match(validation.errors.join('\n'), /compatibility\.minVersion must be a numeric version like 1\.2\.3/);
+});
+
 test('summarizeManifestFeatures reports bootstrap and hook support', () => {
   const features = summarizeManifestFeatures({
     shared: { path: 'shared' },

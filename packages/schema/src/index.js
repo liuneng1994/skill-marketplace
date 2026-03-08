@@ -6,6 +6,7 @@ export const manifestFileName = 'marketplace.skill.json';
 export const supportedTargets = ['copilot-cli', 'claude-code'];
 export const supportedInstallScopes = ['project', 'user', 'project-or-user'];
 export const supportedHookStrategies = ['snippet'];
+const simpleVersionPattern = /^\d+\.\d+\.\d+$/;
 
 function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -32,6 +33,13 @@ function ensureStringArray(errors, label, value) {
   }
 }
 
+function ensureVersionString(errors, label, value) {
+  ensureString(errors, label, value);
+  if (typeof value === 'string' && !simpleVersionPattern.test(value.trim())) {
+    errors.push(`${label} must be a numeric version like 1.2.3.`);
+  }
+}
+
 export function summarizeManifestFeatures(manifest) {
   return {
     hasSharedAssets: Boolean(manifest.shared?.path),
@@ -49,7 +57,7 @@ export function validateManifest(manifest) {
   ensureString(errors, 'slug', manifest.slug);
   ensureString(errors, 'name', manifest.name);
   ensureString(errors, 'summary', manifest.summary);
-  ensureString(errors, 'version', manifest.version);
+  ensureVersionString(errors, 'version', manifest.version);
   ensureString(errors, 'license', manifest.license);
   ensureStringArray(errors, 'tags', manifest.tags);
 
@@ -132,6 +140,13 @@ export function validateManifest(manifest) {
         errors.push(`targets.${targetId}.install must be an object.`);
       } else if (!supportedInstallScopes.includes(descriptor.install.scope)) {
         errors.push(`targets.${targetId}.install.scope must be one of ${supportedInstallScopes.join(', ')}.`);
+      }
+      if (descriptor.compatibility !== undefined) {
+        if (!isObject(descriptor.compatibility)) {
+          errors.push(`targets.${targetId}.compatibility must be an object when provided.`);
+        } else if (descriptor.compatibility.minVersion !== undefined) {
+          ensureVersionString(errors, `targets.${targetId}.compatibility.minVersion`, descriptor.compatibility.minVersion);
+        }
       }
     }
   }

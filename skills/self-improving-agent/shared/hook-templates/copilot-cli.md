@@ -2,45 +2,45 @@
 
 Merge this snippet into your Copilot CLI hook configuration.
 
-- Memory root: `__MEMORY_ROOT__`
-- Installed shared assets: `__SHARED_DIR__`
+- Memory root: `__MEMORY_ROOT_RAW__`
+- Installed shared assets: `__SHARED_DIR_RAW__`
 
 ```json
 {
   "env": {
-    "SIA_MEMORY_ROOT": "__MEMORY_ROOT__"
+    "SIA_MEMORY_ROOT": __MEMORY_ROOT_JSON__
   },
   "hooks": {
     "sessionStart": [
       {
         "type": "command",
-        "command": "node __SCRIPT_DIR__/session-start.mjs"
+        "command": __COPILOT_SESSION_START_COMMAND_JSON__
       }
     ],
     "preToolUse": [
       {
         "matcher": "Bash|Write|Edit",
         "type": "command",
-        "command": "node __SCRIPT_DIR__/pre-tool.mjs"
+        "command": __COPILOT_PRE_TOOL_COMMAND_JSON__
       }
     ],
     "postToolUse": [
       {
         "matcher": "Bash",
         "type": "command",
-        "command": "node __SCRIPT_DIR__/post-tool.mjs"
+        "command": __COPILOT_POST_TOOL_COMMAND_JSON__
       }
     ],
     "errorOccurred": [
       {
         "type": "command",
-        "command": "node __SCRIPT_DIR__/error.mjs"
+        "command": __COPILOT_ERROR_COMMAND_JSON__
       }
     ],
     "sessionEnd": [
       {
         "type": "command",
-        "command": "node __SCRIPT_DIR__/session-end.mjs"
+        "command": __COPILOT_SESSION_END_COMMAND_JSON__
       }
     ]
   }

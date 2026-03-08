@@ -1,12 +1,21 @@
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat } from 'node:fs/promises';
 import test from 'node:test';
-import { installSkillFromBundle } from './index.js';
+import { installSkillFromBundle, uninstallSkill } from './index.js';
 
 const helloWorldBundle = path.join(process.cwd(), 'examples', 'hello-world-skill');
 const selfImprovingBundle = path.join(process.cwd(), 'skills', 'self-improving-agent');
+
+async function pathExists(targetPath) {
+  try {
+    await stat(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 test('installSkillFromBundle installs a Copilot CLI target into the project scope', async () => {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), 'skill-marketplace-workspace-'));
@@ -61,4 +70,86 @@ test('installSkillFromBundle bootstraps memory and hook templates for self-impro
   const hookTemplate = await readFile(result.bootstrap.hookTemplatePath, 'utf8');
   assert.match(hookTemplate, /SIA_MEMORY_ROOT/);
   assert.match(hookTemplate, /session-end\.sh/);
+});
+
+test('installSkillFromBundle enforces target compatibility when clientVersion is provided', async () => {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), 'skill-marketplace-workspace-'));
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'skill-marketplace-home-'));
+
+  await assert.rejects(
+    () =>
+      installSkillFromBundle({
+        bundleDir: selfImprovingBundle,
+        targetId: 'claude-code',
+        scope: 'project',
+        workspaceDir,
+        homeDir,
+        clientVersion: '0.0.9',
+      }),
+    /requires claude-code version 0\.1\.0 or newer/,
+  );
+});
+
+test('installSkillFromBundle renders hook snippets with safely encoded paths', async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), 'skill-marketplace-paths-'));
+  const workspaceDir = path.join(baseDir, 'workspace "quoted" path');
+  const homeDir = path.join(baseDir, 'home "quoted" path');
+  await mkdir(workspaceDir, { recursive: true });
+  await mkdir(homeDir, { recursive: true });
+
+  const result = await installSkillFromBundle({
+    bundleDir: selfImprovingBundle,
+    targetId: 'claude-code',
+    scope: 'project',
+    workspaceDir,
+    homeDir,
+  });
+
+  const hookTemplate = await readFile(result.bootstrap.hookTemplatePath, 'utf8');
+  assert.match(hookTemplate, new RegExp(JSON.stringify(result.bootstrap.memoryRoot).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(hookTemplate, /bash '.*pre-tool\.sh' \\"\$TOOL_NAME\\" \\"\$TOOL_INPUT\\"/);
+});
+
+test('uninstallSkill preserves shared state until the last target is removed', async () => {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), 'skill-marketplace-workspace-'));
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'skill-marketplace-home-'));
+  const claudeInstall = await installSkillFromBundle({
+    bundleDir: selfImprovingBundle,
+    targetId: 'claude-code',
+    scope: 'project',
+    workspaceDir,
+    homeDir,
+  });
+  const copilotInstall = await installSkillFromBundle({
+    bundleDir: selfImprovingBundle,
+    targetId: 'copilot-cli',
+    scope: 'project',
+    workspaceDir,
+    homeDir,
+  });
+
+  const firstRemoval = await uninstallSkill({
+    slug: 'self-improving-agent',
+    targetId: 'claude-code',
+    scope: 'project',
+    workspaceDir,
+    homeDir,
+  });
+  assert.equal(firstRemoval.removed.installDir, true);
+  assert.equal(firstRemoval.removed.hookTemplatePath, true);
+  assert.equal(firstRemoval.removed.stateDir, false);
+  assert.equal(await pathExists(copilotInstall.bootstrap.memoryRoot), true);
+  assert.equal(await pathExists(copilotInstall.bootstrap.hookTemplatePath), true);
+
+  const secondRemoval = await uninstallSkill({
+    slug: 'self-improving-agent',
+    targetId: 'copilot-cli',
+    scope: 'project',
+    workspaceDir,
+    homeDir,
+  });
+  assert.equal(secondRemoval.removed.installDir, true);
+  assert.equal(secondRemoval.removed.stateDir, true);
+  assert.equal(await pathExists(path.join(workspaceDir, '.skill-marketplace', 'self-improving-agent')), false);
+  assert.equal(await pathExists(claudeInstall.installDir), false);
 });
