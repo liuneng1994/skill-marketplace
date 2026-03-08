@@ -64,7 +64,9 @@ test('installSkillFromBundle bootstraps memory and hook templates for self-impro
   assert.equal(result.sharedDir, path.join(result.installDir, 'shared'));
   const installedSkill = await readFile(path.join(result.installDir, 'SKILL.md'), 'utf8');
   assert.match(installedSkill, /Managed memory root:/);
+  assert.match(installedSkill, /Global summary:/);
   assert.doesNotMatch(installedSkill, /__SIA_MEMORY_ROOT__/);
+  assert.doesNotMatch(installedSkill, /__SIA_GLOBAL_SUMMARY__/);
   const template = await readFile(path.join(result.sharedDir, 'templates', 'pattern-template.md'), 'utf8');
   assert.match(template, /Pattern Template/);
   assert.ok(result.bootstrap?.memoryRoot);

@@ -25,7 +25,7 @@
       "versions": [
         {
           "version": "1.0.0",
-          "publishedAt": "2026-03-08T13:57:57.542Z",
+          "publishedAt": "2026-03-08T14:37:07.059Z",
           "checksum": "d889189e3e52388c47ffa52f98963e4a3474dbe6c7c2ad9f96424eb5a4b58143",
           "manifestFile": "marketplace.skill.json",
           "supportedTargets": [
@@ -102,8 +102,8 @@
       "versions": [
         {
           "version": "1.0.0",
-          "publishedAt": "2026-03-08T13:57:57.559Z",
-          "checksum": "de674cd72c67b83567ba45d6cf71f9acf022f9b79628e896f3df08fa7c38af64",
+          "publishedAt": "2026-03-08T14:37:07.077Z",
+          "checksum": "4b8b66988a2a77dc6f18d321cf00819ed317188d707ac1f5b24a719d119fe52c",
           "manifestFile": "marketplace.skill.json",
           "supportedTargets": [
             "copilot-cli",

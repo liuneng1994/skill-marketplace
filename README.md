@@ -130,9 +130,25 @@ The migrated `self-improving-agent` keeps its event stream in `.skill-marketplac
    - shared semantic patterns under `memory/semantic/shared-patterns.json`
    - target-specific overlays under `memory/semantic/targets/<target>.json`
    - corrections and anti-patterns under `memory/semantic/`
+   - a compact user-level global summary under `~/.skill-marketplace/global/skills/<slug>/`
    - managed context/template files under `.skill-marketplace/<slug>/managed/`
 
 The shipped bundle assets stay stable. Learned improvements are auto-applied only to marketplace-managed memory and template artifacts, so reinstalling the bundle remains predictable.
+
+## Global summary + on-demand retrieval
+
+The self-improving-agent now uses a two-tier retrieval model:
+
+1. **Small global summary** — a user-level summary carries only the highest-value shared lessons
+2. **On-demand detail** — the full shared and target-specific managed contexts stay in the per-install state and are consulted only when relevant
+
+The global summary is budgeted and automatically compressed when it grows too large.
+
+- soft overflow: compress the summary and record cleanup recommendations
+- hard overflow: hard-cap the summary and keep detailed guidance only in managed memory/context
+- cleanup hints are written to `~/.skill-marketplace/global/skills/<slug>/cleanup-recommendation.md`
+
+Use `self-improve inspect` to see the current global summary metadata, budget mode, and cleanup recommendations.
 
 ## API endpoints
 

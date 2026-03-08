@@ -29,12 +29,19 @@ export function resolveInstalledSkillPaths({
   const resolveInstallPaths = getTargetResolver(targetId);
   const paths = resolveInstallPaths({ scope, workspaceDir, homeDir });
   const bundleStateRoot = path.join(paths.stateRoot, slug);
+  const userStateRoot = path.join(homeDir, '.skill-marketplace');
+  const globalSummaryRoot = path.join(userStateRoot, 'global', 'skills', slug);
   return {
     ...paths,
     installDir: path.join(paths.installRoot, slug),
     bundleStateRoot,
     memoryRoot: path.join(bundleStateRoot, 'memory'),
     managedRoot: path.join(bundleStateRoot, 'managed'),
+    userStateRoot,
+    globalSummaryRoot,
+    globalSummaryPath: path.join(globalSummaryRoot, 'summary.md'),
+    globalSummaryMetadataPath: path.join(globalSummaryRoot, 'summary.json'),
+    globalSummaryCleanupPath: path.join(globalSummaryRoot, 'cleanup-recommendation.md'),
   };
 }
 
@@ -174,10 +181,12 @@ function replacePlaceholders(template, replacements) {
   return result;
 }
 
-function createHookTemplateReplacements({ targetId, memoryRoot, sharedDir, installDir, installedScriptDir, slug }) {
+function createHookTemplateReplacements({ targetId, memoryRoot, sharedDir, installDir, installedScriptDir, slug, globalStateRoot }) {
   const replacements = {
     '__MEMORY_ROOT_RAW__': memoryRoot,
     '__MEMORY_ROOT_JSON__': JSON.stringify(memoryRoot),
+    '__GLOBAL_STATE_ROOT_RAW__': globalStateRoot,
+    '__GLOBAL_STATE_ROOT_JSON__': JSON.stringify(globalStateRoot),
     '__SHARED_DIR_RAW__': sharedDir,
     '__SHARED_DIR_JSON__': JSON.stringify(sharedDir),
     '__INSTALL_DIR_RAW__': installDir,
@@ -215,9 +224,12 @@ function createHookTemplateReplacements({ targetId, memoryRoot, sharedDir, insta
   return replacements;
 }
 
-function createEntrypointReplacements({ targetId, bundleStateRoot, memoryRoot, managedRoot }) {
+function createEntrypointReplacements({ targetId, bundleStateRoot, memoryRoot, managedRoot, globalSummaryPath, globalSummaryMetadataPath, globalSummaryCleanupPath }) {
   return {
     '__SIA_MEMORY_ROOT__': memoryRoot,
+    '__SIA_GLOBAL_SUMMARY__': globalSummaryPath,
+    '__SIA_GLOBAL_SUMMARY_METADATA__': globalSummaryMetadataPath,
+    '__SIA_GLOBAL_CLEANUP_NOTICE__': globalSummaryCleanupPath,
     '__SIA_SHARED_CONTEXT__': path.join(managedRoot, 'context', 'shared.md'),
     '__SIA_TARGET_CONTEXT__': path.join(managedRoot, 'context', `${targetId}.md`),
     '__SIA_MANAGED_TEMPLATE_ROOT__': path.join(managedRoot, 'templates'),
@@ -235,7 +247,7 @@ async function installSharedAssets({ bundleDir, manifest, installDir }) {
   return sharedDir;
 }
 
-async function bootstrapBundle({ bundleDir, manifest, targetId, stateRoot, installDir, sharedDir }) {
+async function bootstrapBundle({ bundleDir, manifest, targetId, stateRoot, installDir, sharedDir, globalStateRoot }) {
   const bootstrap = {};
   const bundleStateRoot = path.join(stateRoot, manifest.slug);
 
@@ -267,6 +279,7 @@ async function bootstrapBundle({ bundleDir, manifest, targetId, stateRoot, insta
         installDir,
         installedScriptDir,
         slug: manifest.slug,
+        globalStateRoot,
       }),
     );
     await mkdir(path.dirname(hookTemplatePath), { recursive: true });
@@ -278,7 +291,7 @@ async function bootstrapBundle({ bundleDir, manifest, targetId, stateRoot, insta
   return Object.keys(bootstrap).length > 0 ? bootstrap : undefined;
 }
 
-async function renderInstalledEntrypoint({ installDir, descriptor, targetId, bundleStateRoot, bootstrap }) {
+async function renderInstalledEntrypoint({ installDir, descriptor, targetId, bundleStateRoot, bootstrap, globalSummaryPath, globalSummaryMetadataPath, globalSummaryCleanupPath }) {
   const entrypointPath = path.join(installDir, descriptor.entrypoint);
   if (!(await pathExists(entrypointPath))) {
     return;
@@ -291,6 +304,9 @@ async function renderInstalledEntrypoint({ installDir, descriptor, targetId, bun
       bundleStateRoot,
       memoryRoot: bootstrap?.memoryRoot ?? path.join(bundleStateRoot, 'memory'),
       managedRoot: path.join(bundleStateRoot, 'managed'),
+      globalSummaryPath,
+      globalSummaryMetadataPath,
+      globalSummaryCleanupPath,
     }),
   );
   await writeFile(entrypointPath, rendered, 'utf8');
@@ -344,6 +360,7 @@ export async function installSkillFromBundle({
       stateRoot: paths.stateRoot,
       installDir,
       sharedDir,
+      globalStateRoot: paths.userStateRoot,
     });
     await renderInstalledEntrypoint({
       installDir,
@@ -351,6 +368,9 @@ export async function installSkillFromBundle({
       targetId,
       bundleStateRoot: paths.bundleStateRoot,
       bootstrap,
+      globalSummaryPath: paths.globalSummaryPath,
+      globalSummaryMetadataPath: paths.globalSummaryMetadataPath,
+      globalSummaryCleanupPath: paths.globalSummaryCleanupPath,
     });
 
     const { lockfile, recoveredLockfilePath } = await readLockfile(paths.lockfilePath);

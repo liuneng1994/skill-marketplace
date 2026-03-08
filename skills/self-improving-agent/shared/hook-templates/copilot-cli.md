@@ -3,12 +3,14 @@
 Merge this snippet into your Copilot CLI hook configuration.
 
 - Memory root: `__MEMORY_ROOT_RAW__`
+- Global state root: `__GLOBAL_STATE_ROOT_RAW__`
 - Installed shared assets: `__SHARED_DIR_RAW__`
 
 ```json
 {
   "env": {
-    "SIA_MEMORY_ROOT": __MEMORY_ROOT_JSON__
+    "SIA_MEMORY_ROOT": __MEMORY_ROOT_JSON__,
+    "SIA_GLOBAL_STATE_ROOT": __GLOBAL_STATE_ROOT_JSON__
   },
   "hooks": {
     "sessionStart": [

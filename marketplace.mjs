@@ -151,16 +151,19 @@ async function main() {
         memoryRoot: resolvedPaths.memoryRoot,
         target: options.target,
         source: action === 'replay' ? 'manual-replay' : 'manual-analyze',
+        globalStateRoot: resolvedPaths.userStateRoot,
       });
     } else if (action === 'inspect') {
       result = await inspectLearning({
         memoryRoot: resolvedPaths.memoryRoot,
         target: options.target,
+        globalStateRoot: resolvedPaths.userStateRoot,
       });
     } else if (action === 'reset') {
       result = await resetLearning({
         memoryRoot: resolvedPaths.memoryRoot,
         target: options.target,
+        globalStateRoot: resolvedPaths.userStateRoot,
       });
     } else {
       throw new Error(`Unsupported self-improve action: ${action}`);
