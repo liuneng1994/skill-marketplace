@@ -1,1 +1,1 @@
-export const manifestFileName = "marketplace.skill.json";
+export * from './index.js';

@@ -1,1 +1,1 @@
-export const claudeTargetName = "claude-code";
+export * from './index.js';

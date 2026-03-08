@@ -1,1 +1,1 @@
-export const workerAppName = "skill-marketplace-workers";
+export * from './index.js';

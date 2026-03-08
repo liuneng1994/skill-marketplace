@@ -1,0 +1,13 @@
+{
+  "documents": [
+    {
+      "slug": "hello-world-skill",
+      "tokens": "hello-world-skill hello world skill a starter multi-target skill bundle for github copilot cli and claude code. demo starter welcome copilot-cli claude-code",
+      "supportedTargets": [
+        "copilot-cli",
+        "claude-code"
+      ],
+      "latestVersion": "1.0.0"
+    }
+  ]
+}

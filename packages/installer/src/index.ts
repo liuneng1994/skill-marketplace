@@ -1,1 +1,1 @@
-export const installerPackageName = "@skill-marketplace/installer";
+export * from './index.js';

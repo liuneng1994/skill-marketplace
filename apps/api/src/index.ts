@@ -1,1 +1,1 @@
-export const apiAppName = "skill-marketplace-api";
+export * from './index.js';

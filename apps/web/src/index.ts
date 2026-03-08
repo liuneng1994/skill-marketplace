@@ -1,1 +1,1 @@
-export const webAppName = "skill-marketplace-web";
+export * from './index.js';

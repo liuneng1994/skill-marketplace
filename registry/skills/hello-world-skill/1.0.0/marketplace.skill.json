@@ -1,0 +1,37 @@
+{
+  "slug": "hello-world-skill",
+  "name": "Hello World Skill",
+  "summary": "A starter multi-target skill bundle for GitHub Copilot CLI and Claude Code.",
+  "version": "1.0.0",
+  "license": "MIT",
+  "tags": ["demo", "starter", "welcome"],
+  "publisher": {
+    "name": "Skill Marketplace",
+    "github": "liuneng1994"
+  },
+  "repository": {
+    "url": "https://github.com/liuneng1994/skill-marketplace"
+  },
+  "targets": {
+    "copilot-cli": {
+      "path": "targets/copilot-cli",
+      "entrypoint": "SKILL.md",
+      "install": {
+        "scope": "project-or-user"
+      },
+      "compatibility": {
+        "minVersion": "0.1.0"
+      }
+    },
+    "claude-code": {
+      "path": "targets/claude-code",
+      "entrypoint": "SKILL.md",
+      "install": {
+        "scope": "project-or-user"
+      },
+      "compatibility": {
+        "minVersion": "0.1.0"
+      }
+    }
+  }
+}

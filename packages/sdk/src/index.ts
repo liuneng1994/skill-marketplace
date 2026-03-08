@@ -1,1 +1,1 @@
-export const sdkPackageName = "@skill-marketplace/sdk";
+export * from './index.js';

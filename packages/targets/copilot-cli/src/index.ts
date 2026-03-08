@@ -1,1 +1,1 @@
-export const copilotTargetName = "copilot-cli";
+export * from './index.js';
