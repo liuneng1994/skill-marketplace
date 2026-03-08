@@ -3,7 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { publishBundle, listSkills, getSkill, getInstallMetadata, resolveRegistryDir } from './apps/api/src/store.js';
 import { rebuildSearchIndex } from './apps/workers/src/index.js';
-import { installSkillFromBundle, uninstallSkill } from './packages/installer/src/index.js';
+import { installSkillFromBundle, uninstallSkill, resolveInstalledSkillPaths } from './packages/installer/src/index.js';
+import { analyzeAndApply, inspectLearning, resetLearning } from './skills/self-improving-agent/shared/hook-scripts/analyze-session.mjs';
 
 function parseArgs(argv) {
   const positional = [];
@@ -32,7 +33,8 @@ function printUsage() {
   node marketplace.mjs show <slug> [--registry <dir>]
   node marketplace.mjs publish <bundleDir> [--registry <dir>]
   node marketplace.mjs install <slug> --target <target> [--version <version>] [--client-version <version>] [--scope project|user] [--workspace <dir>] [--home <dir>] [--registry <dir>] [--force]
-  node marketplace.mjs uninstall <slug> --target <target> [--client-version <version>] [--scope project|user] [--workspace <dir>] [--home <dir>] [--force]`);
+  node marketplace.mjs uninstall <slug> --target <target> [--client-version <version>] [--scope project|user] [--workspace <dir>] [--home <dir>] [--force]
+  node marketplace.mjs self-improve <analyze|inspect|replay|reset> <slug> --target <target> [--scope project|user] [--workspace <dir>] [--home <dir>]`);
 }
 
 async function main() {
@@ -119,6 +121,51 @@ async function main() {
       force: Boolean(options.force),
       clientVersion: typeof options['client-version'] === 'string' ? options['client-version'] : undefined,
     });
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (command === 'self-improve') {
+    const action = positional[0];
+    const slug = positional[1];
+    if (!action || !slug) {
+      throw new Error('self-improve requires <analyze|inspect|replay|reset> <slug>');
+    }
+    if (slug !== 'self-improving-agent') {
+      throw new Error('self-improve currently supports only self-improving-agent.');
+    }
+    if (typeof options.target !== 'string') {
+      throw new Error('self-improve requires --target <copilot-cli|claude-code>');
+    }
+    const resolvedPaths = resolveInstalledSkillPaths({
+      slug,
+      targetId: options.target,
+      scope: typeof options.scope === 'string' ? options.scope : 'project',
+      workspaceDir: typeof options.workspace === 'string' ? path.resolve(options.workspace) : process.cwd(),
+      homeDir: typeof options.home === 'string' ? path.resolve(options.home) : os.homedir(),
+    });
+
+    let result;
+    if (action === 'analyze' || action === 'replay') {
+      result = await analyzeAndApply({
+        memoryRoot: resolvedPaths.memoryRoot,
+        target: options.target,
+        source: action === 'replay' ? 'manual-replay' : 'manual-analyze',
+      });
+    } else if (action === 'inspect') {
+      result = await inspectLearning({
+        memoryRoot: resolvedPaths.memoryRoot,
+        target: options.target,
+      });
+    } else if (action === 'reset') {
+      result = await resetLearning({
+        memoryRoot: resolvedPaths.memoryRoot,
+        target: options.target,
+      });
+    } else {
+      throw new Error(`Unsupported self-improve action: ${action}`);
+    }
+
     console.log(JSON.stringify(result, null, 2));
     return;
   }

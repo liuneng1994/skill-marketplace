@@ -62,6 +62,9 @@ test('installSkillFromBundle bootstraps memory and hook templates for self-impro
 
   assert.equal(result.installDir, path.join(workspaceDir, '.claude', 'skills', 'self-improving-agent'));
   assert.equal(result.sharedDir, path.join(result.installDir, 'shared'));
+  const installedSkill = await readFile(path.join(result.installDir, 'SKILL.md'), 'utf8');
+  assert.match(installedSkill, /Managed memory root:/);
+  assert.doesNotMatch(installedSkill, /__SIA_MEMORY_ROOT__/);
   const template = await readFile(path.join(result.sharedDir, 'templates', 'pattern-template.md'), 'utf8');
   assert.match(template, /Pattern Template/);
   assert.ok(result.bootstrap?.memoryRoot);

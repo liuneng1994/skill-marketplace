@@ -88,6 +88,18 @@ Uninstall a skill target and clean marketplace-managed state when it is the last
 node marketplace.mjs uninstall self-improving-agent --target claude-code --scope user --client-version 0.1.0
 ```
 
+Run the self-improvement analyzer manually for an installed skill:
+
+```bash
+node marketplace.mjs self-improve analyze self-improving-agent --target claude-code --scope project
+```
+
+Inspect the learned patterns and generated managed files:
+
+```bash
+node marketplace.mjs self-improve inspect self-improving-agent --target claude-code --scope project
+```
+
 ## Install behavior
 
 For bundles that declare bootstrap metadata (such as `self-improving-agent`), installation now does three things:
@@ -107,6 +119,20 @@ The migrated `self-improving-agent` keeps its event stream in `.skill-marketplac
 - the active log rotates automatically once it grows past the retention threshold
 - old rotated files are trimmed to a bounded archive count
 - `retention.json` records the active policy and the currently retained archives
+
+## Self-improvement pipeline
+
+`self-improving-agent` now has two layers:
+
+1. **Telemetry capture** — hooks write raw events into `memory/working/events.jsonl`
+2. **Learning and auto-apply** — session-end analysis consolidates those events into:
+   - episodic session records under `memory/episodic/sessions/`
+   - shared semantic patterns under `memory/semantic/shared-patterns.json`
+   - target-specific overlays under `memory/semantic/targets/<target>.json`
+   - corrections and anti-patterns under `memory/semantic/`
+   - managed context/template files under `.skill-marketplace/<slug>/managed/`
+
+The shipped bundle assets stay stable. Learned improvements are auto-applied only to marketplace-managed memory and template artifacts, so reinstalling the bundle remains predictable.
 
 ## API endpoints
 

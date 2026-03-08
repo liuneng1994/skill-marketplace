@@ -123,9 +123,12 @@ export async function recordEvent({ eventType, memoryRoot, target, payload, rete
   await appendFile(path.join(memoryRoot, 'working', 'events.jsonl'), `${JSON.stringify(event)}\n`, 'utf8');
 
   const session = await readCurrentSession(memoryRoot);
+  if (!session.sessionStartedAt) {
+    session.sessionStartedAt = timestamp;
+  }
   session.target = target;
   session.lastEventAt = timestamp;
-  session.events = [...(session.events ?? []), { eventType, timestamp }].slice(-25);
+  session.events = [...(session.events ?? []), { eventType, timestamp, payload }].slice(-25);
   session.lastPayload = payload;
   await writeCurrentSession(memoryRoot, session);
 

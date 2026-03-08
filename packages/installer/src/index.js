@@ -19,6 +19,25 @@ function getTargetResolver(targetId) {
   throw new Error(`Unsupported install target: ${targetId}`);
 }
 
+export function resolveInstalledSkillPaths({
+  slug,
+  targetId,
+  scope = 'project',
+  workspaceDir = process.cwd(),
+  homeDir = os.homedir(),
+}) {
+  const resolveInstallPaths = getTargetResolver(targetId);
+  const paths = resolveInstallPaths({ scope, workspaceDir, homeDir });
+  const bundleStateRoot = path.join(paths.stateRoot, slug);
+  return {
+    ...paths,
+    installDir: path.join(paths.installRoot, slug),
+    bundleStateRoot,
+    memoryRoot: path.join(bundleStateRoot, 'memory'),
+    managedRoot: path.join(bundleStateRoot, 'managed'),
+  };
+}
+
 function shellQuote(value) {
   const normalized = String(value);
   if (normalized.length === 0) {
@@ -196,6 +215,16 @@ function createHookTemplateReplacements({ targetId, memoryRoot, sharedDir, insta
   return replacements;
 }
 
+function createEntrypointReplacements({ targetId, bundleStateRoot, memoryRoot, managedRoot }) {
+  return {
+    '__SIA_MEMORY_ROOT__': memoryRoot,
+    '__SIA_SHARED_CONTEXT__': path.join(managedRoot, 'context', 'shared.md'),
+    '__SIA_TARGET_CONTEXT__': path.join(managedRoot, 'context', `${targetId}.md`),
+    '__SIA_MANAGED_TEMPLATE_ROOT__': path.join(managedRoot, 'templates'),
+    '__SIA_STATE_ROOT__': bundleStateRoot,
+  };
+}
+
 async function installSharedAssets({ bundleDir, manifest, installDir }) {
   if (!manifest.shared?.path) {
     return undefined;
@@ -249,6 +278,24 @@ async function bootstrapBundle({ bundleDir, manifest, targetId, stateRoot, insta
   return Object.keys(bootstrap).length > 0 ? bootstrap : undefined;
 }
 
+async function renderInstalledEntrypoint({ installDir, descriptor, targetId, bundleStateRoot, bootstrap }) {
+  const entrypointPath = path.join(installDir, descriptor.entrypoint);
+  if (!(await pathExists(entrypointPath))) {
+    return;
+  }
+  const content = await readFile(entrypointPath, 'utf8');
+  const rendered = replacePlaceholders(
+    content,
+    createEntrypointReplacements({
+      targetId,
+      bundleStateRoot,
+      memoryRoot: bootstrap?.memoryRoot ?? path.join(bundleStateRoot, 'memory'),
+      managedRoot: path.join(bundleStateRoot, 'managed'),
+    }),
+  );
+  await writeFile(entrypointPath, rendered, 'utf8');
+}
+
 async function loadInstalledManifest(entry) {
   if (!entry?.bundleDir) {
     throw new Error('Installed skill metadata is missing bundleDir, so compatibility cannot be verified.');
@@ -277,12 +324,11 @@ export async function installSkillFromBundle({
   }
   assertTargetCompatibility({ manifest, targetId, clientVersion });
 
-  const resolveInstallPaths = getTargetResolver(targetId);
-  const paths = resolveInstallPaths({ scope, workspaceDir, homeDir });
+  const paths = resolveInstalledSkillPaths({ slug: manifest.slug, targetId, scope, workspaceDir, homeDir });
   const lock = await acquireInstallerLock(paths.stateRoot);
 
   try {
-    const installDir = path.join(paths.installRoot, manifest.slug);
+    const installDir = paths.installDir;
     if ((await pathExists(installDir)) && !force) {
       throw new Error(`Skill already installed at ${installDir}. Use --force to overwrite.`);
     }
@@ -298,6 +344,13 @@ export async function installSkillFromBundle({
       stateRoot: paths.stateRoot,
       installDir,
       sharedDir,
+    });
+    await renderInstalledEntrypoint({
+      installDir,
+      descriptor,
+      targetId,
+      bundleStateRoot: paths.bundleStateRoot,
+      bootstrap,
     });
 
     const { lockfile, recoveredLockfilePath } = await readLockfile(paths.lockfilePath);
