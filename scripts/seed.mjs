@@ -4,8 +4,13 @@ import { rebuildSearchIndex } from '../apps/workers/src/index.js';
 
 const rootDir = process.cwd();
 const registryDir = resolveRegistryDir(rootDir);
-const bundleDir = path.join(rootDir, 'examples', 'hello-world-skill');
+const bundleDirs = [
+  path.join(rootDir, 'examples', 'hello-world-skill'),
+  path.join(rootDir, 'skills', 'self-improving-agent'),
+];
 
-await publishBundle({ bundleDir, registryDir });
+for (const bundleDir of bundleDirs) {
+  await publishBundle({ bundleDir, registryDir });
+}
 await rebuildSearchIndex({ registryDir });
 console.log('seed-ok');

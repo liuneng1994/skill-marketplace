@@ -1,30 +1,41 @@
+import path from 'node:path';
 import { resolveRegistryDir, listSkills, getInstallMetadata } from '../apps/api/src/store.js';
 import { renderMarketplacePage, renderSkillDetailPage } from '../apps/web/src/index.js';
 import { validateBundleDir } from '../packages/schema/src/index.js';
 
 const rootDir = process.cwd();
 const registryDir = resolveRegistryDir(rootDir);
-const exampleBundle = `${rootDir}/examples/hello-world-skill`;
+const bundles = [
+  path.join(rootDir, 'examples', 'hello-world-skill'),
+  path.join(rootDir, 'skills', 'self-improving-agent'),
+];
 
-const validation = await validateBundleDir(exampleBundle);
-if (!validation.ok) {
-  throw new Error(`Example bundle is invalid:\n${validation.errors.join('\n')}`);
+for (const bundleDir of bundles) {
+  const validation = await validateBundleDir(bundleDir);
+  if (!validation.ok) {
+    throw new Error(`Bundle is invalid (${bundleDir}):\n${validation.errors.join('\n')}`);
+  }
 }
 
 const skills = await listSkills({ registryDir });
-if (skills.length === 0) {
-  throw new Error('Registry is empty. Run `npm run seed` before build.');
+if (skills.length < 2) {
+  throw new Error('Registry should contain both example and self-improving-agent bundles. Run `npm run seed` before build.');
 }
 
 const html = renderMarketplacePage({ skills, query: '', targetFilter: '' });
-if (!html.includes('Skill Marketplace')) {
-  throw new Error('Marketplace page render failed.');
+if (!html.includes('Self Improving Agent')) {
+  throw new Error('Marketplace page should render the self-improving-agent listing.');
 }
 
-const detail = renderSkillDetailPage({ skill: skills[0] });
-if (!detail.includes(skills[0].name)) {
-  throw new Error('Skill detail render failed.');
+const selfImprovingAgent = skills.find((skill) => skill.slug === 'self-improving-agent');
+if (!selfImprovingAgent) {
+  throw new Error('self-improving-agent listing missing from registry output.');
 }
 
-await getInstallMetadata({ registryDir, slug: skills[0].slug, targetId: skills[0].supportedTargets[0] });
+const detail = renderSkillDetailPage({ skill: selfImprovingAgent });
+if (!detail.includes('hook templates')) {
+  throw new Error('Skill detail page should render hook bootstrap information.');
+}
+
+await getInstallMetadata({ registryDir, slug: 'self-improving-agent', targetId: 'claude-code' });
 console.log('build-ok');

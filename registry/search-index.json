@@ -8,6 +8,15 @@
         "claude-code"
       ],
       "latestVersion": "1.0.0"
+    },
+    {
+      "slug": "self-improving-agent",
+      "tokens": "self-improving-agent self improving agent a cross-client self-improving skill with memory bootstrap and hook templates for github copilot cli and claude code. automation memory hooks copilot-cli claude-code copilot-cli claude-code",
+      "supportedTargets": [
+        "copilot-cli",
+        "claude-code"
+      ],
+      "latestVersion": "1.0.0"
     }
   ]
 }

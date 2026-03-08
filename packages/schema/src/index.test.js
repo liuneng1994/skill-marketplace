@@ -3,9 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import test from 'node:test';
-import { validateBundleDir, validateManifest } from './index.js';
+import { summarizeManifestFeatures, validateBundleDir, validateManifest } from './index.js';
 
-const fixtureBundle = path.join(process.cwd(), 'examples', 'hello-world-skill');
+const helloWorldBundle = path.join(process.cwd(), 'examples', 'hello-world-skill');
+const selfImprovingBundle = path.join(process.cwd(), 'skills', 'self-improving-agent');
 
 test('validateManifest accepts the example manifest shape', () => {
   const manifest = {
@@ -21,11 +22,29 @@ test('validateManifest accepts the example manifest shape', () => {
       'copilot-cli': {
         path: 'targets/copilot-cli',
         entrypoint: 'SKILL.md',
-        install: { scope: 'project-or-user' },
-      },
-    },
+        install: { scope: 'project-or-user' }
+      }
+    }
   };
   assert.equal(validateManifest(manifest).ok, true);
+});
+
+test('summarizeManifestFeatures reports bootstrap and hook support', () => {
+  const features = summarizeManifestFeatures({
+    shared: { path: 'shared' },
+    bootstrap: {
+      memory: { path: 'shared/bootstrap/memory' },
+      hooks: {
+        'copilot-cli': { template: 'a.md', scripts: 'b', strategy: 'snippet' },
+        'claude-code': { template: 'c.md', scripts: 'd', strategy: 'snippet' }
+      }
+    }
+  });
+  assert.deepEqual(features, {
+    hasSharedAssets: true,
+    memoryBootstrap: true,
+    hookTargets: ['copilot-cli', 'claude-code']
+  });
 });
 
 test('validateBundleDir rejects missing entrypoints', async () => {
@@ -47,9 +66,9 @@ test('validateBundleDir rejects missing entrypoints', async () => {
           'copilot-cli': {
             path: 'targets/copilot-cli',
             entrypoint: 'SKILL.md',
-            install: { scope: 'project' },
-          },
-        },
+            install: { scope: 'project' }
+          }
+        }
       },
       null,
       2,
@@ -61,8 +80,15 @@ test('validateBundleDir rejects missing entrypoints', async () => {
   assert.match(validation.errors.join('\n'), /entrypoint does not exist/);
 });
 
-test('validateBundleDir accepts the example bundle', async () => {
-  const validation = await validateBundleDir(fixtureBundle);
+test('validateBundleDir accepts the hello-world example bundle', async () => {
+  const validation = await validateBundleDir(helloWorldBundle);
   assert.equal(validation.ok, true);
   assert.equal(validation.manifest.slug, 'hello-world-skill');
+});
+
+test('validateBundleDir accepts the self-improving-agent bundle', async () => {
+  const validation = await validateBundleDir(selfImprovingBundle);
+  assert.equal(validation.ok, true);
+  assert.equal(validation.manifest.slug, 'self-improving-agent');
+  assert.equal(validation.manifest.bootstrap.hooks['copilot-cli'].strategy, 'snippet');
 });

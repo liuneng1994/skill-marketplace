@@ -5,6 +5,7 @@ import { readFile, stat } from 'node:fs/promises';
 export const manifestFileName = 'marketplace.skill.json';
 export const supportedTargets = ['copilot-cli', 'claude-code'];
 export const supportedInstallScopes = ['project', 'user', 'project-or-user'];
+export const supportedHookStrategies = ['snippet'];
 
 function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -31,6 +32,14 @@ function ensureStringArray(errors, label, value) {
   }
 }
 
+export function summarizeManifestFeatures(manifest) {
+  return {
+    hasSharedAssets: Boolean(manifest.shared?.path),
+    memoryBootstrap: Boolean(manifest.bootstrap?.memory?.path),
+    hookTargets: Object.keys(manifest.bootstrap?.hooks ?? {}).filter((targetId) => supportedTargets.includes(targetId)),
+  };
+}
+
 export function validateManifest(manifest) {
   const errors = [];
   if (!isObject(manifest)) {
@@ -55,6 +64,49 @@ export function validateManifest(manifest) {
     errors.push('repository must be an object.');
   } else {
     ensureString(errors, 'repository.url', manifest.repository.url);
+  }
+
+  if (manifest.shared !== undefined) {
+    if (!isObject(manifest.shared)) {
+      errors.push('shared must be an object when provided.');
+    } else {
+      ensureString(errors, 'shared.path', manifest.shared.path);
+    }
+  }
+
+  if (manifest.bootstrap !== undefined) {
+    if (!isObject(manifest.bootstrap)) {
+      errors.push('bootstrap must be an object when provided.');
+    } else {
+      if (manifest.bootstrap.memory !== undefined) {
+        if (!isObject(manifest.bootstrap.memory)) {
+          errors.push('bootstrap.memory must be an object when provided.');
+        } else {
+          ensureString(errors, 'bootstrap.memory.path', manifest.bootstrap.memory.path);
+        }
+      }
+      if (manifest.bootstrap.hooks !== undefined) {
+        if (!isObject(manifest.bootstrap.hooks)) {
+          errors.push('bootstrap.hooks must be an object keyed by target id.');
+        } else {
+          for (const [targetId, descriptor] of Object.entries(manifest.bootstrap.hooks)) {
+            if (!supportedTargets.includes(targetId)) {
+              errors.push(`bootstrap.hooks.${targetId} is not a supported target.`);
+              continue;
+            }
+            if (!isObject(descriptor)) {
+              errors.push(`bootstrap.hooks.${targetId} must be an object.`);
+              continue;
+            }
+            ensureString(errors, `bootstrap.hooks.${targetId}.template`, descriptor.template);
+            ensureString(errors, `bootstrap.hooks.${targetId}.scripts`, descriptor.scripts);
+            if (descriptor.strategy !== undefined && !supportedHookStrategies.includes(descriptor.strategy)) {
+              errors.push(`bootstrap.hooks.${targetId}.strategy must be one of ${supportedHookStrategies.join(', ')}.`);
+            }
+          }
+        }
+      }
+    }
   }
 
   if (!isObject(manifest.targets)) {
@@ -106,6 +158,33 @@ export async function validateBundleDir(bundleDir) {
   errors.push(...manifestValidation.errors);
 
   if (manifestValidation.ok) {
+    if (manifest.shared?.path) {
+      const sharedPath = path.join(resolvedDir, manifest.shared.path);
+      if (!(await pathExists(sharedPath))) {
+        errors.push(`shared.path does not exist: ${manifest.shared.path}`);
+      }
+    }
+
+    if (manifest.bootstrap?.memory?.path) {
+      const memoryPath = path.join(resolvedDir, manifest.bootstrap.memory.path);
+      if (!(await pathExists(memoryPath))) {
+        errors.push(`bootstrap.memory.path does not exist: ${manifest.bootstrap.memory.path}`);
+      }
+    }
+
+    if (manifest.bootstrap?.hooks) {
+      for (const [targetId, descriptor] of Object.entries(manifest.bootstrap.hooks)) {
+        const templatePath = path.join(resolvedDir, descriptor.template);
+        const scriptPath = path.join(resolvedDir, descriptor.scripts);
+        if (!(await pathExists(templatePath))) {
+          errors.push(`bootstrap.hooks.${targetId}.template does not exist: ${descriptor.template}`);
+        }
+        if (!(await pathExists(scriptPath))) {
+          errors.push(`bootstrap.hooks.${targetId}.scripts does not exist: ${descriptor.scripts}`);
+        }
+      }
+    }
+
     for (const [targetId, descriptor] of Object.entries(manifest.targets)) {
       const targetDir = path.join(resolvedDir, descriptor.path);
       if (!(await pathExists(targetDir))) {

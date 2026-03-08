@@ -1,0 +1,57 @@
+{
+  "slug": "self-improving-agent",
+  "name": "Self Improving Agent",
+  "summary": "A cross-client self-improving skill with memory bootstrap and hook templates for GitHub Copilot CLI and Claude Code.",
+  "version": "1.0.0",
+  "license": "MIT",
+  "tags": ["automation", "memory", "hooks", "copilot-cli", "claude-code"],
+  "publisher": {
+    "name": "Skill Marketplace",
+    "github": "liuneng1994"
+  },
+  "repository": {
+    "url": "https://github.com/liuneng1994/skill-marketplace"
+  },
+  "shared": {
+    "path": "shared"
+  },
+  "bootstrap": {
+    "memory": {
+      "path": "shared/bootstrap/memory"
+    },
+    "hooks": {
+      "copilot-cli": {
+        "template": "shared/hook-templates/copilot-cli.md",
+        "scripts": "shared/hook-scripts/copilot-cli",
+        "strategy": "snippet"
+      },
+      "claude-code": {
+        "template": "shared/hook-templates/claude-code.md",
+        "scripts": "shared/hook-scripts/claude-code",
+        "strategy": "snippet"
+      }
+    }
+  },
+  "targets": {
+    "copilot-cli": {
+      "path": "targets/copilot-cli",
+      "entrypoint": "SKILL.md",
+      "install": {
+        "scope": "project-or-user"
+      },
+      "compatibility": {
+        "minVersion": "0.1.0"
+      }
+    },
+    "claude-code": {
+      "path": "targets/claude-code",
+      "entrypoint": "SKILL.md",
+      "install": {
+        "scope": "project-or-user"
+      },
+      "compatibility": {
+        "minVersion": "0.1.0"
+      }
+    }
+  }
+}

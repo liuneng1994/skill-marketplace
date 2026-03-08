@@ -7,18 +7,34 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-function renderTargetBadges(targets) {
-  return targets
-    .map((target) => `<span class="badge">${escapeHtml(target)}</span>`)
+function renderBadges(skill) {
+  const badges = [...skill.supportedTargets.map((target) => ({ label: target, variant: 'target' }))];
+  if (skill.features?.memoryBootstrap) {
+    badges.push({ label: 'memory bootstrap', variant: 'feature' });
+  }
+  for (const hookTarget of skill.features?.hookTargets ?? []) {
+    badges.push({ label: `hooks:${hookTarget}`, variant: 'feature' });
+  }
+  return badges
+    .map((badge) => `<span class="badge ${badge.variant}">${escapeHtml(badge.label)}</span>`)
     .join('');
 }
 
 function renderInstallCommands(skill) {
   return skill.supportedTargets
-    .map(
-      (target) => `<li><code>node marketplace.mjs install ${escapeHtml(skill.slug)} --target ${escapeHtml(target)} --scope project</code></li>`,
-    )
+    .map((target) => `<li><code>node marketplace.mjs install ${escapeHtml(skill.slug)} --target ${escapeHtml(target)} --scope project</code></li>`)
     .join('');
+}
+
+function renderFeatureSummary(skill) {
+  const parts = [];
+  if (skill.features?.memoryBootstrap) {
+    parts.push('memory bootstrap');
+  }
+  if ((skill.features?.hookTargets ?? []).length > 0) {
+    parts.push(`hook templates: ${skill.features.hookTargets.join(', ')}`);
+  }
+  return parts.length > 0 ? parts.join(' • ') : 'portable skill payload only';
 }
 
 export function renderMarketplacePage({ skills, query = '', targetFilter = '' }) {
@@ -30,8 +46,9 @@ export function renderMarketplacePage({ skills, query = '', targetFilter = '' })
           <span class="version">v${escapeHtml(skill.latestVersion)}</span>
         </div>
         <p>${escapeHtml(skill.summary)}</p>
-        <div class="badges">${renderTargetBadges(skill.supportedTargets)}</div>
+        <div class="badges">${renderBadges(skill)}</div>
         <p class="meta">Tags: ${escapeHtml(skill.tags.join(', '))}</p>
+        <p class="meta">Features: ${escapeHtml(renderFeatureSummary(skill))}</p>
         <p class="meta">Publisher: ${escapeHtml(skill.publisher.name)} (${escapeHtml(skill.publisher.github)})</p>
       </article>`,
     )
@@ -48,7 +65,9 @@ export function renderMarketplacePage({ skills, query = '', targetFilter = '' })
       h1, h2 { margin-bottom: 8px; }
       a { color: #93c5fd; text-decoration: none; }
       .hero, .card { background: #111827; border: 1px solid #334155; border-radius: 16px; padding: 20px; margin-bottom: 16px; }
-      .badge { display: inline-block; background: #1d4ed8; padding: 4px 10px; border-radius: 999px; margin-right: 8px; margin-bottom: 8px; font-size: 0.85rem; }
+      .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; margin-right: 8px; margin-bottom: 8px; font-size: 0.85rem; }
+      .badge.target { background: #1d4ed8; }
+      .badge.feature { background: #047857; }
       .meta, .version { color: #94a3b8; }
       form { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
       input, select, button { border-radius: 10px; border: 1px solid #475569; padding: 10px 12px; background: #020617; color: inherit; }
@@ -90,6 +109,7 @@ export function renderSkillDetailPage({ skill }) {
       .panel { background: #111827; border: 1px solid #334155; border-radius: 16px; padding: 20px; margin-bottom: 16px; }
       .badge { display: inline-block; background: #1d4ed8; padding: 4px 10px; border-radius: 999px; margin-right: 8px; margin-bottom: 8px; font-size: 0.85rem; }
       code { background: #020617; padding: 2px 6px; border-radius: 6px; }
+      .meta { color: #94a3b8; }
     </style>
   </head>
   <body>
@@ -98,14 +118,16 @@ export function renderSkillDetailPage({ skill }) {
       <section class="panel">
         <h1>${escapeHtml(skill.name)}</h1>
         <p>${escapeHtml(skill.summary)}</p>
-        <div>${renderTargetBadges(skill.supportedTargets)}</div>
+        <div>${renderBadges(skill)}</div>
         <p>Latest version: <code>${escapeHtml(skill.latestVersion)}</code></p>
         <p>Publisher: ${escapeHtml(skill.publisher.name)} (${escapeHtml(skill.publisher.github)})</p>
         <p>Repository: <a href="${escapeHtml(skill.repository.url)}">${escapeHtml(skill.repository.url)}</a></p>
+        <p class="meta">Feature summary: ${escapeHtml(renderFeatureSummary(skill))}</p>
       </section>
       <section class="panel">
         <h2>Install commands</h2>
         <ul>${renderInstallCommands(skill)}</ul>
+        <p>Skills with hook templates will also generate helper files under <code>.skill-marketplace/</code> during installation.</p>
       </section>
       <section class="panel">
         <h2>Versions</h2>

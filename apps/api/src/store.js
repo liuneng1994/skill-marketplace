@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
-import { manifestFileName, validateBundleDir } from '../../../packages/schema/src/index.js';
+import { manifestFileName, summarizeManifestFeatures, validateBundleDir } from '../../../packages/schema/src/index.js';
 
 const CATALOG_FILE = 'catalog.json';
 
@@ -88,11 +88,13 @@ function summarizeSkill(skill) {
     publisher: skill.publisher,
     license: skill.license,
     repository: skill.repository,
+    features: skill.features,
     versions: skill.versions.map((version) => ({
       version: version.version,
       publishedAt: version.publishedAt,
       checksum: version.checksum,
       supportedTargets: version.supportedTargets,
+      features: version.features,
     })),
   };
 }
@@ -105,6 +107,7 @@ function buildVersionRecord(manifest, publishedAt, checksum) {
     checksum,
     manifestFile: manifestFileName,
     supportedTargets,
+    features: summarizeManifestFeatures(manifest),
     targets: supportedTargets.reduce((accumulator, targetId) => {
       const descriptor = manifest.targets[targetId];
       accumulator[targetId] = {
@@ -146,6 +149,7 @@ export async function publishBundle({ bundleDir, registryDir, publishedAt = new 
     publisher: manifest.publisher,
     license: manifest.license,
     repository: manifest.repository,
+    features: summarizeManifestFeatures(manifest),
     versions: [nextVersion],
   };
 
@@ -183,7 +187,15 @@ export async function listSkills({ registryDir, target, query } = {}) {
       if (!normalizedQuery) {
         return true;
       }
-      const haystack = [skill.slug, skill.name, skill.summary, ...(skill.tags ?? []), ...(skill.supportedTargets ?? [])]
+      const haystack = [
+        skill.slug,
+        skill.name,
+        skill.summary,
+        ...(skill.tags ?? []),
+        ...(skill.supportedTargets ?? []),
+        ...(skill.features?.hookTargets ?? []),
+        skill.features?.memoryBootstrap ? 'memory-bootstrap' : '',
+      ]
         .join(' ')
         .toLowerCase();
       return haystack.includes(normalizedQuery);
@@ -219,6 +231,7 @@ export async function getInstallMetadata({ registryDir, slug, targetId, version 
     targetId,
     version: chosenVersion.version,
     checksum: chosenVersion.checksum,
+    features: chosenVersion.features,
     descriptor: chosenVersion.targets[targetId],
     bundleDir: path.join(registryDir, 'skills', skill.slug, chosenVersion.version),
   };

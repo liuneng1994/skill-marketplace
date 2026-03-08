@@ -8,6 +8,7 @@ A standalone marketplace for publishing, discovering, installing, and updating s
 - A web marketplace that renders listings, compatibility badges, and install commands
 - Shared manifest validation for multi-target skill bundles
 - Target-aware installers for `copilot-cli` and `claude-code`
+- A first-class `self-improving-agent` bundle with memory bootstrap and hook templates
 - An example multi-target skill bundle seeded into the local registry
 
 ## Repository layout
@@ -20,6 +21,7 @@ A standalone marketplace for publishing, discovering, installing, and updating s
 - `packages/installer` — install/update primitives and lockfile support
 - `packages/targets/copilot-cli` — Copilot CLI install path adapters
 - `packages/targets/claude-code` — Claude Code install path adapters
+- `skills/self-improving-agent` — migrated multi-target bundle with shared assets and hook templates
 - `examples/hello-world-skill` — example marketplace bundle
 - `registry/` — generated local registry catalog and published artifacts
 
@@ -30,11 +32,15 @@ Each skill bundle is described by `marketplace.skill.json` and declares one or m
 - `copilot-cli`
 - `claude-code`
 
-Every target points to a native payload directory so the marketplace can preserve each client's expected filesystem layout.
+Optional bundle metadata can also describe:
+
+- `shared.path` for portable assets copied into the installed skill directory
+- `bootstrap.memory` for seeded memory files/directories
+- `bootstrap.hooks` for target-specific hook template generation
 
 ## Quick start
 
-Seed the example bundle into the local registry:
+Seed the built-in bundles into the local registry:
 
 ```bash
 npm run seed
@@ -61,20 +67,30 @@ node marketplace.mjs list
 Show details for one skill:
 
 ```bash
-node marketplace.mjs show hello-world-skill
+node marketplace.mjs show self-improving-agent
 ```
 
-Install for GitHub Copilot CLI into the current workspace:
+Install the migrated self-improving-agent for GitHub Copilot CLI into the current workspace:
 
 ```bash
-node marketplace.mjs install hello-world-skill --target copilot-cli --scope project
+node marketplace.mjs install self-improving-agent --target copilot-cli --scope project
 ```
 
-Install for Claude Code into the user-level skill directory:
+Install the migrated self-improving-agent for Claude Code into the user-level skill directory:
 
 ```bash
-node marketplace.mjs install hello-world-skill --target claude-code --scope user
+node marketplace.mjs install self-improving-agent --target claude-code --scope user
 ```
+
+## Install behavior
+
+For bundles that declare bootstrap metadata (such as `self-improving-agent`), installation now does three things:
+
+1. copies the target payload into the client-native skills directory
+2. copies any declared shared assets into `<installed-skill>/shared`
+3. bootstraps memory and generated hook template files under `.skill-marketplace/<slug>/`
+
+The installer does **not** silently overwrite your existing Copilot CLI or Claude Code hook settings. Instead it generates target-specific hook snippets you can review and merge intentionally.
 
 ## API endpoints
 
@@ -91,4 +107,6 @@ node marketplace.mjs install hello-world-skill --target claude-code --scope user
 - Copilot CLI user installs: `~/.copilot/skills/<slug>`
 - Claude Code project installs: `<workspace>/.claude/skills/<slug>`
 - Claude Code user installs: `~/.claude/skills/<slug>`
-- Lockfiles: `.skill-marketplace/lock.json` under the selected project or user root
+- Marketplace state root: `<workspace-or-home>/.skill-marketplace`
+- Lockfiles: `.skill-marketplace/lock.json`
+- Generated hook templates for bootstrapped bundles: `.skill-marketplace/<slug>/generated-hooks/`
