@@ -1,0 +1,19 @@
+{
+  "name": "skill-marketplace",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Skill marketplace for GitHub Copilot CLI and Claude Code.",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "packages/targets/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "dev:web": "npm run dev --workspace @skill-marketplace/web",
+    "dev:api": "npm run dev --workspace @skill-marketplace/api"
+  }
+}
