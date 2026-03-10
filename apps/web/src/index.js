@@ -20,10 +20,89 @@ function renderBadges(skill) {
     .join('');
 }
 
-function renderInstallCommands(skill) {
+function getDefaultTarget(skill) {
+  if (skill.supportedTargets.includes('copilot-cli')) {
+    return 'copilot-cli';
+  }
+  return skill.supportedTargets[0] ?? 'copilot-cli';
+}
+
+function renderRegistryInstallCommands(skill) {
   return skill.supportedTargets
     .map((target) => `<li><code>node marketplace.mjs install ${escapeHtml(skill.slug)} --target ${escapeHtml(target)} --scope project</code></li>`)
     .join('');
+}
+
+function buildRepositoryCommands(skill) {
+  const defaultTarget = getDefaultTarget(skill);
+  const commands = [
+    {
+      id: 'remote-default-command',
+      title: 'Recommended: install from the repository URL',
+      text: `node marketplace.mjs install ${skill.slug} ${skill.repository.url} --scope project`,
+      buttonLabel: 'Copy recommended command',
+      featured: true,
+      note: 'Use this when the repository is not cloned yet.',
+    },
+    {
+      id: 'local-default-command',
+      title: 'Already in the repository? Use the local command',
+      text: `node marketplace.mjs install ${skill.slug} --scope project`,
+      buttonLabel: 'Copy local command',
+      note: 'Run this inside an existing checkout that already contains the skill bundle.',
+    },
+  ];
+
+  for (const target of skill.supportedTargets) {
+    if (target === defaultTarget) {
+      continue;
+    }
+    commands.push({
+      id: `remote-${target}-command`,
+      title: `Need ${target} instead?`,
+      text: `node marketplace.mjs install ${skill.slug} ${skill.repository.url} --target ${target} --scope project`,
+      buttonLabel: `Copy ${target} command`,
+      note: `The default target is ${defaultTarget}; use this override when ${target} is required.`,
+    });
+  }
+
+  return commands;
+}
+
+function buildPromptTemplate(skill) {
+  const defaultTarget = getDefaultTarget(skill);
+  const lines = [
+    `Install the ${skill.slug} skill from ${skill.repository.url} with Skill Marketplace in this workspace.`,
+    '',
+    'Preferred command when the repository is not cloned yet:',
+    `node marketplace.mjs install ${skill.slug} ${skill.repository.url} --scope project`,
+    '',
+    'If the repository is already cloned and this terminal is inside that repository, run:',
+    `node marketplace.mjs install ${skill.slug} --scope project`,
+  ];
+
+  if (skill.supportedTargets.length > 1) {
+    const alternateTargets = skill.supportedTargets.filter((target) => target !== defaultTarget);
+    if (alternateTargets.length > 0) {
+      lines.push('', `Default target: ${defaultTarget}.`);
+      for (const target of alternateTargets) {
+        lines.push(`If ${target} is required, add: --target ${target}`);
+      }
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function renderCopyableSnippet({ id, title, text, buttonLabel, note, featured = false }) {
+  return `<div class="copy-snippet${featured ? ' featured-snippet' : ''}">
+    <div class="snippet-header">
+      <h3>${escapeHtml(title)}</h3>
+      <button type="button" class="copy-button" data-copy-target="${escapeHtml(id)}" data-copy-label="${escapeHtml(buttonLabel)}">${escapeHtml(buttonLabel)}</button>
+    </div>
+    ${note ? `<p class="snippet-note">${escapeHtml(note)}</p>` : ''}
+    <pre><code id="${escapeHtml(id)}">${escapeHtml(text)}</code></pre>
+  </div>`;
 }
 
 function renderFeatureSummary(skill) {
@@ -35,6 +114,31 @@ function renderFeatureSummary(skill) {
     parts.push(`hook templates: ${skill.features.hookTargets.join(', ')}`);
   }
   return parts.length > 0 ? parts.join(' • ') : 'portable skill payload only';
+}
+
+function renderCopyScript() {
+  return `<script>
+    document.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-copy-target]');
+      if (!button) {
+        return;
+      }
+      const target = document.getElementById(button.getAttribute('data-copy-target'));
+      if (!target) {
+        return;
+      }
+      const defaultLabel = button.getAttribute('data-copy-label') || 'Copy';
+      try {
+        await navigator.clipboard.writeText(target.textContent || '');
+        button.textContent = 'Copied';
+      } catch {
+        button.textContent = 'Copy failed';
+      }
+      window.setTimeout(() => {
+        button.textContent = defaultLabel;
+      }, 1600);
+    });
+  </script>`;
 }
 
 export function renderMarketplacePage({ skills, query = '', targetFilter = '' }) {
@@ -97,6 +201,18 @@ export function renderMarketplacePage({ skills, query = '', targetFilter = '' })
 }
 
 export function renderSkillDetailPage({ skill }) {
+  const repositoryCommands = buildRepositoryCommands(skill)
+    .map((command) => renderCopyableSnippet(command))
+    .join('');
+  const promptTemplate = renderCopyableSnippet({
+    id: 'model-install-prompt',
+    title: 'Send this to your coding model',
+    text: buildPromptTemplate(skill),
+    buttonLabel: 'Copy prompt for model',
+    note: 'Paste this into Copilot, Claude, or another coding model when you want it to run the install flow for you.',
+    featured: true,
+  });
+
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -109,7 +225,17 @@ export function renderSkillDetailPage({ skill }) {
       .panel { background: #111827; border: 1px solid #334155; border-radius: 16px; padding: 20px; margin-bottom: 16px; }
       .badge { display: inline-block; background: #1d4ed8; padding: 4px 10px; border-radius: 999px; margin-right: 8px; margin-bottom: 8px; font-size: 0.85rem; }
       code { background: #020617; padding: 2px 6px; border-radius: 6px; }
+      pre { background: #020617; border: 1px solid #334155; border-radius: 12px; padding: 14px; overflow-x: auto; white-space: pre-wrap; }
       .meta { color: #94a3b8; }
+      .install-steps { margin: 0 0 0 20px; color: #cbd5e1; }
+      .install-steps li + li { margin-top: 8px; }
+      .copy-snippet + .copy-snippet { margin-top: 16px; }
+      .featured-snippet { border: 1px solid #2563eb; border-radius: 14px; padding: 16px; background: #0b1220; }
+      .snippet-header { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 10px; }
+      .snippet-header h3 { margin: 0; font-size: 1rem; }
+      .snippet-note { margin: 0 0 12px; color: #cbd5e1; }
+      .copy-button { border-radius: 10px; border: 1px solid #475569; padding: 8px 12px; background: #2563eb; color: inherit; cursor: pointer; }
+      .eyebrow { display: inline-block; margin-bottom: 10px; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: #93c5fd; }
     </style>
   </head>
   <body>
@@ -125,8 +251,23 @@ export function renderSkillDetailPage({ skill }) {
         <p class="meta">Feature summary: ${escapeHtml(renderFeatureSummary(skill))}</p>
       </section>
       <section class="panel">
-        <h2>Install commands</h2>
-        <ul>${renderInstallCommands(skill)}</ul>
+        <span class="eyebrow">Fastest path</span>
+        <h2>Install from repository</h2>
+        <ol class="install-steps">
+          <li>Copy the recommended command if you want to install directly from the repository URL.</li>
+          <li>Use the local command instead when you are already inside the repository checkout.</li>
+          <li>Copy the model prompt if you want Copilot or another coding model to run the install flow for you.</li>
+        </ol>
+        <div style="margin-top: 16px;">${repositoryCommands}</div>
+      </section>
+      <section class="panel">
+        <span class="eyebrow">Model-friendly</span>
+        <h2>One-click prompt</h2>
+        ${promptTemplate}
+      </section>
+      <section class="panel">
+        <h2>Registry install commands</h2>
+        <ul>${renderRegistryInstallCommands(skill)}</ul>
         <p>Skills with hook templates will also generate helper files under <code>.skill-marketplace/</code> during installation.</p>
       </section>
       <section class="panel">
@@ -136,6 +277,7 @@ export function renderSkillDetailPage({ skill }) {
           .join('')}</ul>
       </section>
     </main>
+    ${renderCopyScript()}
   </body>
 </html>`;
 }

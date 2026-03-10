@@ -82,6 +82,26 @@ Install the migrated self-improving-agent for Claude Code into the user-level sk
 node marketplace.mjs install self-improving-agent --target claude-code --scope user --client-version 0.1.0
 ```
 
+Install a skill directly from a git repository by repository address plus skill slug:
+
+```bash
+node marketplace.mjs install self-improving-agent https://github.com/liuneng1994/skill-marketplace.git --scope project --client-version 0.1.0
+```
+
+Install from a specific branch, tag, or commit:
+
+```bash
+node marketplace.mjs install self-improving-agent https://github.com/liuneng1994/skill-marketplace.git --ref main --scope project --client-version 0.1.0
+```
+
+If you are already inside the cloned repository, install from the current working tree without writing the repository address again:
+
+```bash
+node marketplace.mjs install self-improving-agent --scope project --client-version 0.1.0
+```
+
+For repository or local-working-tree installs, omit `--target` to use the bundle's only target or default to `copilot-cli` when the bundle supports multiple targets. Pass `--target claude-code` to override that default.
+
 Uninstall a skill target and clean marketplace-managed state when it is the last install for that skill:
 
 ```bash
@@ -108,6 +128,10 @@ For bundles that declare bootstrap metadata (such as `self-improving-agent`), in
 2. copies any declared shared assets into `<installed-skill>/shared`
 3. bootstraps memory and generated hook template files under `.skill-marketplace/<slug>/`
 4. optionally enforces `compatibility.minVersion` when you pass `--client-version`
+
+When you pass a repository as the second positional install argument, the CLI clones that git repository into a temporary checkout, finds the bundle whose `marketplace.skill.json` has the requested `slug`, validates it, resolves a target (explicit `--target`, otherwise the only target or default `copilot-cli`), and then runs the same installer path as a registry-based install.
+
+When no repository argument is provided, `marketplace.mjs install <slug>` first checks whether the current working tree already contains that skill bundle. If it does, installation runs directly from the local bundle source; otherwise the CLI falls back to the published registry flow.
 
 The installer does **not** silently overwrite your existing Copilot CLI or Claude Code hook settings. Instead it generates target-specific hook snippets you can review and merge intentionally.
 It also serializes install and uninstall mutations through `.skill-marketplace/locks/installer.lock` so concurrent operations cannot corrupt marketplace state.

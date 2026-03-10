@@ -3,7 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { publishBundle, listSkills, getSkill, getInstallMetadata, resolveRegistryDir } from './apps/api/src/store.js';
 import { rebuildSearchIndex } from './apps/workers/src/index.js';
-import { installSkillFromBundle, uninstallSkill, resolveInstalledSkillPaths } from './packages/installer/src/index.js';
+import { installSkillFromBundle, installSkillFromRepository, uninstallSkill, resolveInstalledSkillPaths } from './packages/installer/src/index.js';
+import { findBundleDirs, readManifest, resolveBundleDirBySlug } from './packages/schema/src/index.js';
 import { analyzeAndApply, inspectLearning, resetLearning } from './skills/self-improving-agent/shared/hook-scripts/analyze-session.mjs';
 
 function parseArgs(argv) {
@@ -32,9 +33,21 @@ function printUsage() {
   node marketplace.mjs list [--target <target>] [--registry <dir>]
   node marketplace.mjs show <slug> [--registry <dir>]
   node marketplace.mjs publish <bundleDir> [--registry <dir>]
-  node marketplace.mjs install <slug> --target <target> [--version <version>] [--client-version <version>] [--scope project|user] [--workspace <dir>] [--home <dir>] [--registry <dir>] [--force]
+  node marketplace.mjs install <slug> [repository] [--ref <git-ref>] [--target <target>] [--version <version>] [--client-version <version>] [--scope project|user] [--workspace <dir>] [--home <dir>] [--registry <dir>] [--force]
   node marketplace.mjs uninstall <slug> --target <target> [--client-version <version>] [--scope project|user] [--workspace <dir>] [--home <dir>] [--force]
   node marketplace.mjs self-improve <analyze|inspect|replay|reset> <slug> --target <target> [--scope project|user] [--workspace <dir>] [--home <dir>]`);
+}
+
+async function resolveLocalBundleDir(rootDir, slug) {
+  const bundleDirs = await findBundleDirs(rootDir);
+  for (const bundleDir of bundleDirs) {
+    const manifest = await readManifest(bundleDir);
+    if (manifest.slug === slug) {
+      const resolved = await resolveBundleDirBySlug(rootDir, slug);
+      return resolved.bundleDir;
+    }
+  }
+  return undefined;
 }
 
 async function main() {
@@ -82,8 +95,44 @@ async function main() {
     if (!slug) {
       throw new Error('install requires a <slug> argument');
     }
+    const repository = typeof options.repo === 'string' ? options.repo : positional[1];
+    if (typeof repository === 'string' && repository.trim() !== '') {
+      const result = await installSkillFromRepository({
+        repository,
+        slug,
+        ref: typeof options.ref === 'string' ? options.ref : undefined,
+        targetId: typeof options.target === 'string' ? options.target : undefined,
+        scope: typeof options.scope === 'string' ? options.scope : 'project',
+        workspaceDir: typeof options.workspace === 'string' ? path.resolve(options.workspace) : process.cwd(),
+        homeDir: typeof options.home === 'string' ? path.resolve(options.home) : os.homedir(),
+        force: Boolean(options.force),
+        clientVersion: typeof options['client-version'] === 'string' ? options['client-version'] : undefined,
+      });
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
+    const localBundleDir = await resolveLocalBundleDir(process.cwd(), slug);
+    if (localBundleDir) {
+      const result = await installSkillFromBundle({
+        bundleDir: localBundleDir,
+        targetId: typeof options.target === 'string' ? options.target : undefined,
+        scope: typeof options.scope === 'string' ? options.scope : 'project',
+        workspaceDir: typeof options.workspace === 'string' ? path.resolve(options.workspace) : process.cwd(),
+        homeDir: typeof options.home === 'string' ? path.resolve(options.home) : os.homedir(),
+        force: Boolean(options.force),
+        clientVersion: typeof options['client-version'] === 'string' ? options['client-version'] : undefined,
+        source: {
+          type: 'local',
+          repository: process.cwd(),
+        },
+      });
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
     if (typeof options.target !== 'string') {
-      throw new Error('install requires --target <copilot-cli|claude-code>');
+      throw new Error('install requires --target <copilot-cli|claude-code> when installing from the registry.');
     }
     const metadata = await getInstallMetadata({
       registryDir,

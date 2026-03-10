@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdir, mkdtemp, readFile, stat } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, stat } from 'node:fs/promises';
 import test from 'node:test';
-import { installSkillFromBundle, uninstallSkill } from './index.js';
+import { promisify } from 'node:util';
+import { installSkillFromBundle, installSkillFromRepository, uninstallSkill } from './index.js';
 
 const helloWorldBundle = path.join(process.cwd(), 'examples', 'hello-world-skill');
 const selfImprovingBundle = path.join(process.cwd(), 'skills', 'self-improving-agent');
+const execFileAsync = promisify(execFile);
 
 async function pathExists(targetPath) {
   try {
@@ -15,6 +18,23 @@ async function pathExists(targetPath) {
   } catch {
     return false;
   }
+}
+
+async function runGit(args) {
+  await execFileAsync('git', args);
+}
+
+async function createRepositoryFixture(sourceBundleDir, targetRelativeDir) {
+  const repoDir = await mkdtemp(path.join(os.tmpdir(), 'skill-marketplace-repo-fixture-'));
+  const bundleDir = path.join(repoDir, targetRelativeDir);
+  await mkdir(path.dirname(bundleDir), { recursive: true });
+  await cp(sourceBundleDir, bundleDir, { recursive: true });
+  await runGit(['init', repoDir]);
+  await runGit(['-C', repoDir, 'config', 'user.name', 'Skill Marketplace Tests']);
+  await runGit(['-C', repoDir, 'config', 'user.email', 'tests@example.com']);
+  await runGit(['-C', repoDir, 'add', '.']);
+  await runGit(['-C', repoDir, 'commit', '-m', 'fixture']);
+  return repoDir;
 }
 
 test('installSkillFromBundle installs a Copilot CLI target into the project scope', async () => {
@@ -95,6 +115,22 @@ test('installSkillFromBundle enforces target compatibility when clientVersion is
   );
 });
 
+test('installSkillFromBundle defaults to copilot-cli when target is omitted for a multi-target bundle', async () => {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), 'skill-marketplace-workspace-'));
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'skill-marketplace-home-'));
+
+  const result = await installSkillFromBundle({
+    bundleDir: helloWorldBundle,
+    scope: 'project',
+    workspaceDir,
+    homeDir,
+    clientVersion: '0.1.0',
+  });
+
+  assert.equal(result.targetId, 'copilot-cli');
+  assert.equal(result.installDir, path.join(workspaceDir, '.github', 'skills', 'hello-world-skill'));
+});
+
 test('installSkillFromBundle renders hook snippets with safely encoded paths', async () => {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), 'skill-marketplace-paths-'));
   const workspaceDir = path.join(baseDir, 'workspace "quoted" path');
@@ -157,4 +193,60 @@ test('uninstallSkill preserves shared state until the last target is removed', a
   assert.equal(secondRemoval.removed.stateDir, true);
   assert.equal(await pathExists(path.join(workspaceDir, '.skill-marketplace', 'self-improving-agent')), false);
   assert.equal(await pathExists(claudeInstall.installDir), false);
+});
+
+test('installSkillFromRepository clones a git repo, resolves the requested skill slug, and persists source metadata', async () => {
+  const repoDir = await createRepositoryFixture(helloWorldBundle, path.join('skills', 'hello-world-skill'));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), 'skill-marketplace-workspace-'));
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'skill-marketplace-home-'));
+
+  const result = await installSkillFromRepository({
+    repository: repoDir,
+    slug: 'hello-world-skill',
+    targetId: 'copilot-cli',
+    scope: 'project',
+    workspaceDir,
+    homeDir,
+    clientVersion: '0.1.0',
+  });
+
+  assert.equal(result.installDir, path.join(workspaceDir, '.github', 'skills', 'hello-world-skill'));
+  assert.equal(result.source?.type, 'git');
+  assert.equal(result.source?.repository, repoDir);
+  assert.match(result.source?.commit ?? '', /^[0-9a-f]{40}$/);
+
+  const lockfile = JSON.parse(await readFile(result.lockfilePath, 'utf8'));
+  assert.equal(lockfile.installs['copilot-cli:hello-world-skill'].source.repository, repoDir);
+  assert.equal(lockfile.installs['copilot-cli:hello-world-skill'].manifest.slug, 'hello-world-skill');
+
+  const removal = await uninstallSkill({
+    slug: 'hello-world-skill',
+    targetId: 'copilot-cli',
+    scope: 'project',
+    workspaceDir,
+    homeDir,
+    clientVersion: '0.1.0',
+  });
+  assert.equal(removal.removed.installDir, true);
+});
+
+test('installSkillFromRepository defaults to copilot-cli when target is omitted for a multi-target bundle', async () => {
+  const repoDir = await createRepositoryFixture(helloWorldBundle, path.join('skills', 'hello-world-skill'));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), 'skill-marketplace-workspace-'));
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'skill-marketplace-home-'));
+
+  const result = await installSkillFromRepository({
+    repository: repoDir,
+    slug: 'hello-world-skill',
+    scope: 'project',
+    workspaceDir,
+    homeDir,
+    clientVersion: '0.1.0',
+  });
+
+  assert.equal(result.targetId, 'copilot-cli');
+  assert.equal(result.installDir, path.join(workspaceDir, '.github', 'skills', 'hello-world-skill'));
+
+  const lockfile = JSON.parse(await readFile(result.lockfilePath, 'utf8'));
+  assert.equal(lockfile.installs['copilot-cli:hello-world-skill'].targetId, 'copilot-cli');
 });

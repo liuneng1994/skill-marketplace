@@ -1,13 +1,16 @@
 import os from 'node:os';
 import path from 'node:path';
-import { cp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { readManifest, validateBundleDir } from '../../schema/src/index.js';
+import { execFile } from 'node:child_process';
+import { cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { promisify } from 'node:util';
+import { readManifest, resolveBundleDirBySlug, validateBundleDir } from '../../schema/src/index.js';
 import { resolveCopilotCliInstallPaths } from '../../targets/copilot-cli/src/index.js';
 import { resolveClaudeCodeInstallPaths } from '../../targets/claude-code/src/index.js';
 
 const installerLockTimeoutMs = 5_000;
 const installerLockRetryMs = 100;
 const simpleVersionPattern = /^\d+\.\d+\.\d+$/;
+const execFileAsync = promisify(execFile);
 
 function getTargetResolver(targetId) {
   if (targetId === 'copilot-cli') {
@@ -107,6 +110,66 @@ async function pathExists(targetPath) {
   } catch {
     return false;
   }
+}
+
+async function runGit(args) {
+  try {
+    return await execFileAsync('git', args);
+  } catch (error) {
+    const stderr = error && typeof error === 'object' && 'stderr' in error ? String(error.stderr).trim() : '';
+    const command = ['git', ...args].join(' ');
+    throw new Error(stderr ? `Git command failed (${command}): ${stderr}` : `Git command failed (${command}).`);
+  }
+}
+
+function normalizeInstallSource(source) {
+  if (!source || typeof source !== 'object') {
+    return undefined;
+  }
+  const normalized = {};
+  if (typeof source.type === 'string' && source.type.trim() !== '') {
+    normalized.type = source.type.trim();
+  }
+  if (typeof source.repository === 'string' && source.repository.trim() !== '') {
+    normalized.repository = source.repository.trim();
+  }
+  if (typeof source.ref === 'string' && source.ref.trim() !== '') {
+    normalized.ref = source.ref.trim();
+  }
+  if (typeof source.commit === 'string' && source.commit.trim() !== '') {
+    normalized.commit = source.commit.trim();
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+async function cloneRepository({ repository, ref }) {
+  if (typeof repository !== 'string' || repository.trim() === '') {
+    throw new Error('Repository must be a non-empty git URL or local git path.');
+  }
+  const checkoutDir = await mkdtemp(path.join(os.tmpdir(), 'skill-marketplace-checkout-'));
+  await runGit(['clone', '--quiet', repository.trim(), checkoutDir]);
+  if (typeof ref === 'string' && ref.trim() !== '') {
+    await runGit(['-C', checkoutDir, 'checkout', '--quiet', ref.trim()]);
+  }
+  const { stdout } = await runGit(['-C', checkoutDir, 'rev-parse', 'HEAD']);
+  return {
+    checkoutDir,
+    commit: stdout.trim(),
+  };
+}
+
+function resolveTargetId({ manifest, targetId }) {
+  if (typeof targetId === 'string' && targetId.trim() !== '') {
+    return targetId.trim();
+  }
+  const supportedTargetIds = Object.keys(manifest.targets ?? {});
+  if (supportedTargetIds.includes('copilot-cli')) {
+    return 'copilot-cli';
+  }
+  if (supportedTargetIds.length === 1) {
+    return supportedTargetIds[0];
+  }
+  throw new Error(`Skill ${manifest.slug} supports multiple targets (${supportedTargetIds.join(', ')}), and no default target could be inferred. Pass --target explicitly.`);
 }
 
 function normalizeLockfile(lockfile) {
@@ -313,8 +376,11 @@ async function renderInstalledEntrypoint({ installDir, descriptor, targetId, bun
 }
 
 async function loadInstalledManifest(entry) {
+  if (entry?.manifest && typeof entry.manifest === 'object') {
+    return entry.manifest;
+  }
   if (!entry?.bundleDir) {
-    throw new Error('Installed skill metadata is missing bundleDir, so compatibility cannot be verified.');
+    throw new Error('Installed skill metadata is missing manifest details, so compatibility cannot be verified.');
   }
   return readManifest(entry.bundleDir);
 }
@@ -327,6 +393,7 @@ export async function installSkillFromBundle({
   homeDir = os.homedir(),
   force = false,
   clientVersion,
+  source,
 }) {
   const validation = await validateBundleDir(bundleDir);
   if (!validation.ok) {
@@ -334,13 +401,14 @@ export async function installSkillFromBundle({
   }
 
   const manifest = validation.manifest;
-  const descriptor = manifest.targets[targetId];
+  const resolvedTargetId = resolveTargetId({ manifest, targetId });
+  const descriptor = manifest.targets[resolvedTargetId];
   if (!descriptor) {
-    throw new Error(`Target ${targetId} is not defined by ${manifest.slug}.`);
+    throw new Error(`Target ${resolvedTargetId} is not defined by ${manifest.slug}.`);
   }
-  assertTargetCompatibility({ manifest, targetId, clientVersion });
+  assertTargetCompatibility({ manifest, targetId: resolvedTargetId, clientVersion });
 
-  const paths = resolveInstalledSkillPaths({ slug: manifest.slug, targetId, scope, workspaceDir, homeDir });
+  const paths = resolveInstalledSkillPaths({ slug: manifest.slug, targetId: resolvedTargetId, scope, workspaceDir, homeDir });
   const lock = await acquireInstallerLock(paths.stateRoot);
 
   try {
@@ -356,7 +424,7 @@ export async function installSkillFromBundle({
     const bootstrap = await bootstrapBundle({
       bundleDir,
       manifest,
-      targetId,
+      targetId: resolvedTargetId,
       stateRoot: paths.stateRoot,
       installDir,
       sharedDir,
@@ -365,7 +433,7 @@ export async function installSkillFromBundle({
     await renderInstalledEntrypoint({
       installDir,
       descriptor,
-      targetId,
+      targetId: resolvedTargetId,
       bundleStateRoot: paths.bundleStateRoot,
       bootstrap,
       globalSummaryPath: paths.globalSummaryPath,
@@ -374,14 +442,16 @@ export async function installSkillFromBundle({
     });
 
     const { lockfile, recoveredLockfilePath } = await readLockfile(paths.lockfilePath);
-    lockfile.installs[`${targetId}:${manifest.slug}`] = {
+    lockfile.installs[`${resolvedTargetId}:${manifest.slug}`] = {
       slug: manifest.slug,
       version: manifest.version,
-      targetId,
+      targetId: resolvedTargetId,
       scope,
       installDir,
       bundleDir,
+      manifest,
       bootstrap,
+      source: normalizeInstallSource(source),
       updatedAt: new Date().toISOString(),
     };
     await writeLockfile(paths.lockfilePath, lockfile);
@@ -389,16 +459,65 @@ export async function installSkillFromBundle({
     return {
       slug: manifest.slug,
       version: manifest.version,
-      targetId,
+      targetId: resolvedTargetId,
       scope,
       installDir,
       sharedDir,
       lockfilePath: paths.lockfilePath,
       recoveredLockfilePath,
       bootstrap,
+      source: normalizeInstallSource(source),
     };
   } finally {
     await releaseInstallerLock(lock);
+  }
+}
+
+export async function installSkillFromRepository({
+  repository,
+  slug,
+  ref,
+  targetId,
+  scope = 'project',
+  workspaceDir = process.cwd(),
+  homeDir = os.homedir(),
+  force = false,
+  clientVersion,
+}) {
+  if (typeof slug !== 'string' || slug.trim() === '') {
+    throw new Error('install requires a <slug> argument');
+  }
+
+  const checkout = await cloneRepository({ repository, ref });
+  try {
+    const resolved = await resolveBundleDirBySlug(checkout.checkoutDir, slug.trim());
+    const result = await installSkillFromBundle({
+      bundleDir: resolved.bundleDir,
+      targetId,
+      scope,
+      workspaceDir,
+      homeDir,
+      force,
+      clientVersion,
+      source: {
+        type: 'git',
+        repository,
+        ref,
+        commit: checkout.commit,
+      },
+    });
+
+    return {
+      ...result,
+      source: {
+        type: 'git',
+        repository: repository.trim(),
+        ref: typeof ref === 'string' && ref.trim() !== '' ? ref.trim() : undefined,
+        commit: checkout.commit,
+      },
+    };
+  } finally {
+    await rm(checkout.checkoutDir, { recursive: true, force: true });
   }
 }
 

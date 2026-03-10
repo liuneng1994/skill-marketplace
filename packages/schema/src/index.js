@@ -1,12 +1,13 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 
 export const manifestFileName = 'marketplace.skill.json';
 export const supportedTargets = ['copilot-cli', 'claude-code'];
 export const supportedInstallScopes = ['project', 'user', 'project-or-user'];
 export const supportedHookStrategies = ['snippet'];
 const simpleVersionPattern = /^\d+\.\d+\.\d+$/;
+const ignoredBundleSearchDirectories = new Set(['.git', 'node_modules', 'registry', '.skill-marketplace']);
 
 function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -221,4 +222,80 @@ export async function validateBundleDir(bundleDir) {
     errors,
     manifest,
   };
+}
+
+async function collectBundleDirs(rootDir, currentDir = rootDir, bundleDirs = []) {
+  const entries = await readdir(currentDir, { withFileTypes: true });
+  if (entries.some((entry) => entry.isFile() && entry.name === manifestFileName)) {
+    bundleDirs.push(currentDir);
+    return bundleDirs;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || ignoredBundleSearchDirectories.has(entry.name)) {
+      continue;
+    }
+    await collectBundleDirs(rootDir, path.join(currentDir, entry.name), bundleDirs);
+  }
+
+  return bundleDirs;
+}
+
+export async function findBundleDirs(rootDir) {
+  const resolvedRoot = rootDir instanceof URL ? fileURLToPath(rootDir) : path.resolve(rootDir);
+  return collectBundleDirs(resolvedRoot);
+}
+
+export async function resolveBundleDirBySlug(rootDir, slug) {
+  if (typeof slug !== 'string' || slug.trim() === '') {
+    throw new Error('Skill slug must be a non-empty string.');
+  }
+
+  const resolvedRoot = rootDir instanceof URL ? fileURLToPath(rootDir) : path.resolve(rootDir);
+  const bundleDirs = await findBundleDirs(resolvedRoot);
+  const matchingBundles = [];
+
+  for (const bundleDir of bundleDirs) {
+    const manifest = await readManifest(bundleDir);
+    if (manifest.slug === slug) {
+      matchingBundles.push({ bundleDir, manifest });
+    }
+  }
+
+  if (matchingBundles.length === 0) {
+    throw new Error(`Skill ${slug} was not found in repository ${resolvedRoot}.`);
+  }
+
+  const validBundles = [];
+  const invalidBundles = [];
+
+  for (const bundle of matchingBundles) {
+    const validation = await validateBundleDir(bundle.bundleDir);
+    if (validation.ok) {
+      validBundles.push({ bundleDir: bundle.bundleDir, manifest: validation.manifest });
+      continue;
+    }
+    invalidBundles.push({ bundleDir: bundle.bundleDir, errors: validation.errors });
+  }
+
+  if (validBundles.length === 1) {
+    return validBundles[0];
+  }
+
+  if (validBundles.length > 1) {
+    throw new Error(
+      `Multiple valid bundles matched skill ${slug} in repository ${resolvedRoot}:\n${validBundles
+        .map((bundle) => `- ${path.relative(resolvedRoot, bundle.bundleDir) || '.'}`)
+        .join('\n')}`,
+    );
+  }
+
+  throw new Error(
+    `Found skill ${slug} in repository ${resolvedRoot}, but the bundle is invalid:\n${invalidBundles
+      .map((bundle) => {
+        const relativeDir = path.relative(resolvedRoot, bundle.bundleDir) || '.';
+        return [`- ${relativeDir}`, ...bundle.errors.map((error) => `  ${error}`)].join('\n');
+      })
+      .join('\n')}`,
+  );
 }

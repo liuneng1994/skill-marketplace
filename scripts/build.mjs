@@ -36,6 +36,15 @@ const detail = renderSkillDetailPage({ skill: selfImprovingAgent });
 if (!detail.includes('hook templates')) {
   throw new Error('Skill detail page should render hook bootstrap information.');
 }
+if (!detail.includes('Install from repository')) {
+  throw new Error('Skill detail page should render repository install templates.');
+}
+if (!detail.includes('Copy prompt for model')) {
+  throw new Error('Skill detail page should render a copyable prompt template.');
+}
+if (!detail.includes('Copy recommended command')) {
+  throw new Error('Skill detail page should highlight the recommended install command.');
+}
 
 await getInstallMetadata({ registryDir, slug: 'self-improving-agent', targetId: 'claude-code' });
 console.log('build-ok');
